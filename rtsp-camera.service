@@ -1,0 +1,16 @@
+[Unit]
+Description=Raspberry Pi RTSP Stream
+After=network.target
+
+[Service]
+ExecStart=/home/hansolo/rtsp-camera.sh
+Restart=always
+RestartSec=5
+User=hansolo
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=rtsp-stream
+MemoryMax=256M
+MemoryAccounting=true
+[Install]
+WantedBy=multi-user.target

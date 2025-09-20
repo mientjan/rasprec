@@ -65,7 +65,6 @@ exec rpicam-vid \
     --height 480 \
     --bitrate 1000000 \
     --profile baseline \
-    --level 4.0 \
     --intra 30 \
     --inline \
     --flush \
@@ -78,7 +77,6 @@ cvlc \
     --no-stats \
     --no-osd \
     --no-interact \
-    --extraintf logger \
     --verbose 0 \
     stream:///dev/stdin \
     --sout '#rtp{sdp=rtsp://:8554/stream1,caching=500}' \

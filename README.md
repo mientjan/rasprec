@@ -25,9 +25,28 @@ A lightweight RTSP camera streaming solution for Raspberry Pi Zero 2 W that capt
 
 ## Installation
 
-1. **Clone or download this repository** to your Raspberry Pi:
+### Quick Install (Recommended)
+
+The easiest way to install on your Raspberry Pi:
+
+```bash
+# Download and run the installation script
+wget https://raw.githubusercontent.com/mientjan/rasprec/main/install.sh
+chmod +x install.sh
+./install.sh
+```
+
+This will automatically:
+- Clone the repository to `~/rasprec`
+- Install git if not present
+- Make all scripts executable
+- Optionally run the setup immediately
+
+### Manual Installation
+
+1. **Clone the repository** to your Raspberry Pi:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/mientjan/rasprec.git
    cd rasprec
    ```
 
@@ -37,18 +56,21 @@ A lightweight RTSP camera streaming solution for Raspberry Pi Zero 2 W that capt
    ./run.sh
    ```
 
-   This script will:
-   - Install all dependencies (VLC, ffmpeg, monitoring tools)
-   - Copy stable streaming configuration to `/home/hansolo/`
-   - Install enhanced systemd service with stability features
-   - Set up automatic monitoring every 5 minutes
-   - Create user 'hansolo' if needed
-   - Start the RTSP stream automatically
+### What the Setup Does
 
-3. **Verify the service is running**:
-   ```bash
-   sudo systemctl status rtsp-camera
-   ```
+The setup script will:
+- Install all dependencies (VLC, ffmpeg, monitoring tools)
+- Copy stable streaming configuration to `/home/hansolo/`
+- Install enhanced systemd service with stability features
+- Set up automatic monitoring every 5 minutes
+- Create user 'hansolo' if needed
+- Start the RTSP stream automatically
+
+### Verify Installation
+
+```bash
+sudo systemctl status rtsp-camera
+```
 
 The setup automatically includes all stability features for long-term operation:
 - ✅ Enhanced stability configuration
@@ -137,12 +159,12 @@ The systemd service is configured with enhanced stability features:
 ```
 rasprec/
 ├── README.md                    # This documentation
+├── install.sh                   # Quick installation script for Raspberry Pi
 ├── run.sh                       # Main setup script with stability features
 ├── rtsp-camera.sh               # Enhanced streaming script with stability features
 ├── rtsp-camera.service          # Enhanced systemd service configuration
 ├── camera-monitor.sh            # Stream monitoring and auto-restart script
 ├── diagnose.sh                  # System diagnostic tool
-├── test.sh                      # Test script (utility)
 └── package.json                 # Project metadata
 ```
 

@@ -143,6 +143,30 @@ To modify these settings, edit the `rtsp-camera.sh` file:
 sudo nano /home/hansolo/rtsp-camera.sh
 ```
 
+### GPU Memory Configuration
+
+For optimal camera streaming performance, ensure adequate GPU memory allocation:
+
+**Automatic Configuration (Recommended):**
+```bash
+./setup-gpu-memory.sh
+```
+
+**Manual Configuration:**
+```bash
+# Edit config file
+sudo nano /boot/firmware/config.txt  # (or /boot/config.txt on older systems)
+# Add or modify:
+gpu_mem=128
+# Reboot to apply
+sudo reboot
+```
+
+**Check Current Setting:**
+```bash
+vcgencmd get_mem gpu
+```
+
 ### Service Configuration
 
 The systemd service is configured with enhanced stability features:
@@ -161,6 +185,7 @@ rasprec/
 ├── README.md                    # This documentation
 ├── install.sh                   # Quick installation script for Raspberry Pi
 ├── run.sh                       # Main setup script with stability features
+├── setup-gpu-memory.sh          # GPU memory configuration helper script
 ├── rtsp-camera.sh               # Enhanced streaming script with stability features
 ├── rtsp-camera.service          # Enhanced systemd service configuration
 ├── camera-monitor.sh            # Stream monitoring and auto-restart script

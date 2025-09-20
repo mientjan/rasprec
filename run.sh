@@ -76,8 +76,28 @@ if command -v vcgencmd &> /dev/null; then
     GPU_MEM=$(vcgencmd get_mem gpu | cut -d'=' -f2 | cut -d'M' -f1)
     if [ "$GPU_MEM" -lt 128 ]; then
         echo "WARNING: GPU memory is ${GPU_MEM}M"
-        echo "Recommend increasing to 128M+ for stability:"
-        echo "sudo raspi-config -> Advanced Options -> Memory Split -> 128"
+        echo "Recommend increasing to 128M+ for camera streaming stability:"
+        echo ""
+        echo "Quick fix: Run the GPU memory setup script:"
+        echo "  ./setup-gpu-memory.sh"
+        echo ""
+        echo "Manual method:"
+        echo "1. Edit: sudo nano /boot/firmware/config.txt (or /boot/config.txt)"
+        echo "2. Add/modify: gpu_mem=128"
+        echo "3. Reboot: sudo reboot"
+        echo ""
+        read -p "Run GPU memory setup script now? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            if [ -f "setup-gpu-memory.sh" ]; then
+                chmod +x setup-gpu-memory.sh
+                ./setup-gpu-memory.sh
+                # If script reboots, this won't continue
+                echo "GPU memory setup completed. Continuing with installation..."
+            else
+                echo "setup-gpu-memory.sh not found, continuing with manual instructions above"
+            fi
+        fi
     else
         echo "✓ GPU memory: ${GPU_MEM}M"
     fi

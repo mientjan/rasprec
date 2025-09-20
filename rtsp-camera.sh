@@ -61,9 +61,9 @@ log_message "Starting camera capture..."
 exec /usr/bin/rpicam-vid \
     --timeout 0 \
     --framerate 24 \
-    --width 720 \
-    --height 480 \
-    --bitrate 1000000 \
+    --width 1280 \
+    --height 720 \
+    --bitrate 2000000 \
     --profile baseline \
     --intra 30 \
     --inline \

@@ -65,7 +65,7 @@ exec rpicam-vid \
     --height 480 \
     --bitrate 1000000 \
     --profile baseline \
-    --level 3.1 \
+    --level 4.0 \
     --intra 30 \
     --inline \
     --flush \
@@ -78,8 +78,6 @@ cvlc \
     --no-stats \
     --no-osd \
     --no-interact \
-    --no-qt-privacy-ask \
-    --no-qt-updates-notifier \
     --extraintf logger \
     --verbose 0 \
     stream:///dev/stdin \

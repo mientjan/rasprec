@@ -7,7 +7,7 @@ echo "=== RaspRec Setup ==="
 echo "Setting up stable RTSP camera streaming for Raspberry Pi..."
 
 # Check if this is an update or fresh install
-if [ -f "/etc/systemd/system/rtsp-camera.service" ] || [ -f "/home/hansolo/rtsp-camera.sh" ]; then
+if [ -f "/etc/systemd/system/rtsp-camera.service" ]; then
     echo "🔄 Existing installation detected - performing update/reinstall"
     echo "   Previous configurations will be backed up with timestamp"
 else
@@ -113,25 +113,77 @@ if ! command -v ffprobe &> /dev/null; then
     sudo apt-get install -y ffmpeg
 fi
 
+# Configuration - ask for username if not provided
+if [ -z "$CAMERA_USER" ]; then
+    echo ""
+    echo "Camera streaming requires a user account."
+    
+    # Get the actual user (not root when using sudo)
+    ACTUAL_USER="${SUDO_USER:-$USER}"
+    
+    echo "Options:"
+    echo "1. Use current user ($ACTUAL_USER)"
+    echo "2. Create dedicated camera user"
+    echo ""
+    read -p "Choose option (1/2) or enter custom username: " USER_CHOICE
+    
+    case "$USER_CHOICE" in
+        1)
+            CAMERA_USER="$ACTUAL_USER"
+            echo "Using current user: $CAMERA_USER"
+            ;;
+        2)
+            read -p "Enter username for dedicated camera user: " CAMERA_USER
+            if [ -z "$CAMERA_USER" ]; then
+                echo "ERROR: Username is required"
+                exit 1
+            fi
+            ;;
+        "")
+            echo "ERROR: Please choose an option or enter a username"
+            exit 1
+            ;;
+        *)
+            CAMERA_USER="$USER_CHOICE"
+            echo "Using custom username: $CAMERA_USER"
+            ;;
+    esac
+fi
+
 # Create user if it doesn't exist
-if ! id "hansolo" &>/dev/null; then
-    echo "Creating user 'hansolo'..."
-    sudo useradd -m -s /bin/bash hansolo
-    sudo usermod -a -G video hansolo
-    echo "User 'hansolo' created and added to video group"
+if ! id "$CAMERA_USER" &>/dev/null; then
+    echo "Creating user '$CAMERA_USER'..."
+    sudo useradd -m -s /bin/bash "$CAMERA_USER"
+    if getent group video > /dev/null 2>&1; then
+        sudo usermod -a -G video "$CAMERA_USER"
+        echo "User '$CAMERA_USER' created and added to existing video group"
+    else
+        echo "User '$CAMERA_USER' created (video group not found - may need manual camera permissions)"
+    fi
+else
+    echo "Using existing user '$CAMERA_USER'"
+    # Ensure user is in video group (only if group exists)
+    if getent group video > /dev/null 2>&1; then
+        if ! groups "$CAMERA_USER" | grep -q "\bvideo\b"; then
+            sudo usermod -a -G video "$CAMERA_USER"
+            echo "Added '$CAMERA_USER' to existing video group"
+        else
+            echo "User '$CAMERA_USER' already in video group"
+        fi
+    fi
 fi
 
 echo "Setting up streaming script..."
 # Backup existing script if it exists
-if [ -f "/home/hansolo/rtsp-camera.sh" ]; then
+if [ -f "/home/$CAMERA_USER/rtsp-camera.sh" ]; then
     echo "Backing up existing streaming script..."
-    sudo cp /home/hansolo/rtsp-camera.sh /home/hansolo/rtsp-camera.sh.backup.$(date +%Y%m%d_%H%M%S)
+    sudo cp /home/$CAMERA_USER/rtsp-camera.sh /home/$CAMERA_USER/rtsp-camera.sh.backup.$(date +%Y%m%d_%H%M%S)
 fi
 
 # Copy and install the streaming script
-sudo cp rtsp-camera.sh /home/hansolo/rtsp-camera.sh
-sudo chmod +x /home/hansolo/rtsp-camera.sh
-sudo chown hansolo:hansolo /home/hansolo/rtsp-camera.sh
+sudo cp rtsp-camera.sh /home/$CAMERA_USER/rtsp-camera.sh
+sudo chmod +x /home/$CAMERA_USER/rtsp-camera.sh
+sudo chown $CAMERA_USER:$CAMERA_USER /home/$CAMERA_USER/rtsp-camera.sh
 
 echo "Installing systemd service..."
 # Stop existing service if running
@@ -146,25 +198,25 @@ if [ -f "/etc/systemd/system/rtsp-camera.service" ]; then
     sudo cp /etc/systemd/system/rtsp-camera.service /etc/systemd/system/rtsp-camera.service.backup.$(date +%Y%m%d_%H%M%S)
 fi
 
-# Install the service file
-sudo cp rtsp-camera.service /etc/systemd/system/rtsp-camera.service
+# Install the service file with correct user
+sed "s/User=CAMERA_USER_PLACEHOLDER/User=$CAMERA_USER/" rtsp-camera.service | sudo tee /etc/systemd/system/rtsp-camera.service > /dev/null
 
 echo "Setting up monitoring script..."
 # Backup existing monitoring script if it exists
-if [ -f "/home/hansolo/camera-monitor.sh" ]; then
+if [ -f "/home/$CAMERA_USER/camera-monitor.sh" ]; then
     echo "Backing up existing monitoring script..."
-    sudo cp /home/hansolo/camera-monitor.sh /home/hansolo/camera-monitor.sh.backup.$(date +%Y%m%d_%H%M%S)
+    sudo cp /home/$CAMERA_USER/camera-monitor.sh /home/$CAMERA_USER/camera-monitor.sh.backup.$(date +%Y%m%d_%H%M%S)
 fi
 
 # Install monitoring script
-sudo cp camera-monitor.sh /home/hansolo/
-sudo chmod +x /home/hansolo/camera-monitor.sh
-sudo chown hansolo:hansolo /home/hansolo/camera-monitor.sh
+sudo cp camera-monitor.sh /home/$CAMERA_USER/
+sudo chmod +x /home/$CAMERA_USER/camera-monitor.sh
+sudo chown $CAMERA_USER:$CAMERA_USER /home/$CAMERA_USER/camera-monitor.sh
 
 # Add monitoring to crontab (avoid duplicates)
 echo "Setting up automatic monitoring (every 5 minutes)..."
-CRON_JOB="*/5 * * * * /home/hansolo/camera-monitor.sh"
-(sudo crontab -l 2>/dev/null | grep -v "/home/hansolo/camera-monitor.sh"; echo "$CRON_JOB") | sudo crontab -
+CRON_JOB="*/5 * * * * /home/$CAMERA_USER/camera-monitor.sh"
+(sudo crontab -l 2>/dev/null | grep -v "/home/$CAMERA_USER/camera-monitor.sh"; echo "$CRON_JOB") | sudo crontab -
 
 # Force reload systemd daemon for any service changes
 echo "Reloading systemd daemon..."
@@ -218,6 +270,6 @@ echo "The system will now automatically monitor and restart the stream if needed
 # Clean up old backup files (keep only last 5)
 echo ""
 echo "Cleaning up old backup files (keeping last 5)..."
-sudo find /home/hansolo/ -name "*.backup.*" -type f | sort | head -n -5 | xargs -r sudo rm -f
+sudo find /home/$CAMERA_USER/ -name "*.backup.*" -type f | sort | head -n -5 | xargs -r sudo rm -f
 sudo find /etc/systemd/system/ -name "rtsp-camera.service.backup.*" -type f | sort | head -n -5 | xargs -r sudo rm -f
 echo "Cleanup completed."

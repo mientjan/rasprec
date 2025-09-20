@@ -6,11 +6,11 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/home/hansolo/rtsp-camera.sh
+ExecStart=/bin/bash %h/rtsp-camera.sh
 ExecStartPre=/bin/sleep 10
 Restart=always
 RestartSec=15
-User=hansolo
+User=CAMERA_USER_PLACEHOLDER
 Group=video
 
 # Resource limits for stability
@@ -34,9 +34,8 @@ ProtectHome=true
 ReadWritePaths=/tmp /var/log
 PrivateTmp=true
 
-# Environment
-Environment=HOME=/home/hansolo
-Environment=XDG_RUNTIME_DIR=/run/user/1000
+# Environment (systemd will set HOME automatically based on User=)
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Kill settings
 KillMode=mixed

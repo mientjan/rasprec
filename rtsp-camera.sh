@@ -58,7 +58,7 @@ fi
 log_message "Starting camera capture..."
 
 # Use exec to replace the shell process (important for proper signal handling)
-exec rpicam-vid \
+exec /usr/bin/rpicam-vid \
     --timeout 0 \
     --framerate 24 \
     --width 720 \
@@ -70,7 +70,7 @@ exec rpicam-vid \
     --flush \
     --nopreview \
     --output - | \
-cvlc \
+/usr/bin/cvlc \
     --intf dummy \
     --no-audio \
     --no-video-title-show \

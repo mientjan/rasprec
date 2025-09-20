@@ -31,49 +31,85 @@ fi
 REPO_URL="https://github.com/mientjan/rasprec.git"
 INSTALL_DIR="$HOME/rasprec"
 
-# Remove existing directory if it exists
+# Check if directory already exists
 if [ -d "$INSTALL_DIR" ]; then
-    echo "Removing existing rasprec directory..."
-    rm -rf "$INSTALL_DIR"
+    echo "🔄 Existing RaspRec installation found at $INSTALL_DIR"
+    echo "Updating repository..."
+    
+    cd "$INSTALL_DIR"
+    
+    # Check if it's a git repository
+    if [ -d ".git" ]; then
+        # Stash any local changes
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Stashing local changes..."
+            git stash push -m "Auto-stash before update $(date)"
+        fi
+        
+        # Pull latest changes
+        echo "Pulling latest changes from repository..."
+        git fetch origin
+        git reset --hard origin/main
+        
+        echo "✓ Repository updated successfully"
+    else
+        echo "WARNING: Directory exists but is not a git repository"
+        echo "Backing up existing directory and cloning fresh..."
+        mv "$INSTALL_DIR" "${INSTALL_DIR}.backup.$(date +%Y%m%d_%H%M%S)"
+        git clone "$REPO_URL" "$INSTALL_DIR"
+        cd "$INSTALL_DIR"
+    fi
+else
+    echo "🆕 Fresh installation - cloning repository..."
+    git clone "$REPO_URL" "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
 fi
-
-# Clone the repository
-echo "Cloning RaspRec repository..."
-git clone "$REPO_URL" "$INSTALL_DIR"
-
-# Change to the project directory
-cd "$INSTALL_DIR"
 
 # Make the setup script executable
 chmod +x run.sh
 
 echo ""
-echo "=== Repository cloned successfully! ==="
+if [ -d "$INSTALL_DIR/.git" ] && git log --oneline -1 &>/dev/null; then
+    echo "=== Repository updated successfully! ==="
+    echo "Latest commit: $(git log --oneline -1)"
+else
+    echo "=== Repository setup completed! ==="
+fi
 echo "Location: $INSTALL_DIR"
 echo ""
-echo "Next steps:"
-echo "1. cd $INSTALL_DIR"
-echo "2. ./run.sh"
-echo ""
-echo "The setup script will:"
-echo "- Install all dependencies (VLC, ffmpeg, monitoring tools)"
-echo "- Configure RTSP streaming with stability features"
-echo "- Set up automatic monitoring every 5 minutes"
-echo "- Create necessary users and permissions"
-echo "- Start the camera stream automatically"
+
+# Check if this is an update or fresh install for messaging
+if systemctl is-active --quiet rtsp-camera 2>/dev/null; then
+    echo "🔄 Existing RTSP service detected - this appears to be an update"
+    echo "The setup script will:"
+    echo "- Update all components with the latest versions"
+    echo "- Backup existing configurations"
+    echo "- Restart services with new code"
+    echo "- Maintain existing settings and monitoring"
+else
+    echo "🆕 Fresh installation detected"
+    echo "The setup script will:"
+    echo "- Install all dependencies (VLC, ffmpeg, monitoring tools)"
+    echo "- Configure RTSP streaming with stability features"
+    echo "- Set up automatic monitoring every 5 minutes"
+    echo "- Create necessary users and permissions"
+    echo "- Start the camera stream automatically"
+fi
 echo ""
 
 # Ask if user wants to run setup immediately
-read -p "Would you like to run the setup now? (y/N): " -n 1 -r
+read -p "Would you like to run the setup/update now? (Y/n): " -n 1 -r
 echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [[ $REPLY =~ ^[Nn]$ ]]; then
     echo ""
-    echo "Starting setup..."
-    ./run.sh
+    echo "Setup skipped. Run the following commands when ready:"
+    echo "  cd $INSTALL_DIR"
+    echo "  ./run.sh"
 else
     echo ""
-    echo "Setup skipped. Run './run.sh' when you're ready to configure the camera."
-    echo "Make sure to enable the camera first with: sudo raspi-config"
+    echo "Starting setup/update..."
+    echo "========================================"
+    ./run.sh
 fi
 
 echo ""

@@ -288,7 +288,30 @@ sudo crontab -e
 
 #### Camera Not Detected (Initial Setup)
 
-**Enable camera interface:**
+**Modern Raspberry Pi OS (Bookworm+):**
+Camera should be auto-detected by default. If not working:
+
+```bash
+# Check /boot/config.txt has:
+grep camera_auto_detect /boot/config.txt
+# Should show: camera_auto_detect=1
+
+# If missing, add it:
+echo "camera_auto_detect=1" | sudo tee -a /boot/config.txt
+sudo reboot
+```
+
+**For older/problematic cameras, try manual overlay:**
+```bash
+# Edit /boot/config.txt:
+sudo nano /boot/config.txt
+# Change: camera_auto_detect=1
+# To: camera_auto_detect=0
+#     dtoverlay=imx219  # (or your camera model)
+sudo reboot
+```
+
+**Legacy Raspberry Pi OS (Bullseye and older):**
 ```bash
 sudo raspi-config
 # Navigate to: Interface Options → Camera → Enable
@@ -297,15 +320,22 @@ sudo reboot
 
 **Test camera manually:**
 ```bash
+# Modern Raspberry Pi OS (Bookworm+):
 rpicam-vid --timeout 5000 --output test.h264
-# Or for older systems:
-raspivid -t 5000 -o test.h264
+# Or for older Bookworm:
+libcamera-vid --timeout 5000 --output test.h264
 ```
 
 **Check camera connection:**
 ```bash
+# Modern detection (recommended):
+rpicam-still --list-cameras
+# Or for older Bookworm:
+libcamera-still --list-cameras
+
+# Legacy method (unreliable on modern systems):
 vcgencmd get_camera
-# Should return: supported=1 detected=1
+# Note: May show "supported=0 detected=0" even when camera works
 ```
 
 #### VLC/Streaming Issues

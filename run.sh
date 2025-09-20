@@ -6,26 +6,68 @@
 echo "=== RaspRec Setup ==="
 echo "Setting up stable RTSP camera streaming for Raspberry Pi..."
 
+# Check if this is an update or fresh install
+if [ -f "/etc/systemd/system/rtsp-camera.service" ] || [ -f "/home/hansolo/rtsp-camera.sh" ]; then
+    echo "🔄 Existing installation detected - performing update/reinstall"
+    echo "   Previous configurations will be backed up with timestamp"
+else
+    echo "🆕 Fresh installation detected"
+fi
+echo ""
+
 # Check if we're running on Raspberry Pi
 if ! command -v vcgencmd &> /dev/null; then
     echo "WARNING: This doesn't appear to be a Raspberry Pi system"
     echo "vcgencmd command not found"
 fi
 
-# Check if camera is enabled
-if command -v vcgencmd &> /dev/null; then
-    CAMERA_STATUS=$(vcgencmd get_camera 2>/dev/null || echo "supported=0 detected=0")
-    if [[ $CAMERA_STATUS != *"detected=1"* ]]; then
-        echo "WARNING: Camera not detected. Enable it with:"
-        echo "sudo raspi-config -> Interface Options -> Camera -> Enable"
-        echo "Then reboot and run this script again."
+# Check if camera is available using modern libcamera tools
+echo "Checking camera availability..."
+if command -v rpicam-still &> /dev/null; then
+    # Use modern rpicam-apps (Bookworm and newer)
+    if rpicam-still --list-cameras 2>/dev/null | grep -q "Available cameras"; then
+        echo "✓ Camera detected via rpicam-still"
+        CAMERA_COUNT=$(rpicam-still --list-cameras 2>/dev/null | grep -c ":")
+        echo "  Found $CAMERA_COUNT camera(s)"
+    else
+        echo "WARNING: No cameras detected via rpicam-still"
+        echo "Camera troubleshooting:"
+        echo "1. Check physical connection of camera module"
+        echo "2. Verify /boot/config.txt has 'camera_auto_detect=1'"
+        echo "3. Try: sudo reboot"
+        echo "4. For older cameras, you may need to disable auto-detect and use specific overlay"
         read -p "Continue anyway? (y/N): " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             exit 1
         fi
+    fi
+elif command -v libcamera-still &> /dev/null; then
+    # Fallback to libcamera-still (older Bookworm)
+    if libcamera-still --list-cameras 2>/dev/null | grep -q "Available cameras"; then
+        echo "✓ Camera detected via libcamera-still"
+        CAMERA_COUNT=$(libcamera-still --list-cameras 2>/dev/null | grep -c ":")
+        echo "  Found $CAMERA_COUNT camera(s)"
     else
-        echo "✓ Camera detected"
+        echo "WARNING: No cameras detected via libcamera-still"
+        echo "Camera troubleshooting:"
+        echo "1. Check physical connection of camera module"
+        echo "2. Verify /boot/config.txt has 'camera_auto_detect=1'"
+        echo "3. Try: sudo reboot"
+        read -p "Continue anyway? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+    fi
+else
+    echo "WARNING: Neither rpicam-still nor libcamera-still found"
+    echo "This may be an older Raspberry Pi OS version or missing camera software"
+    echo "Modern Raspberry Pi OS (Bookworm+) should have rpicam-apps installed by default"
+    read -p "Continue anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
     fi
 fi
 
@@ -60,30 +102,55 @@ if ! id "hansolo" &>/dev/null; then
 fi
 
 echo "Setting up streaming script..."
+# Backup existing script if it exists
+if [ -f "/home/hansolo/rtsp-camera.sh" ]; then
+    echo "Backing up existing streaming script..."
+    sudo cp /home/hansolo/rtsp-camera.sh /home/hansolo/rtsp-camera.sh.backup.$(date +%Y%m%d_%H%M%S)
+fi
+
 # Copy and install the streaming script
 sudo cp rtsp-camera.sh /home/hansolo/rtsp-camera.sh
 sudo chmod +x /home/hansolo/rtsp-camera.sh
 sudo chown hansolo:hansolo /home/hansolo/rtsp-camera.sh
 
 echo "Installing systemd service..."
+# Stop existing service if running
+if systemctl is-active --quiet rtsp-camera; then
+    echo "Stopping existing rtsp-camera service..."
+    sudo systemctl stop rtsp-camera
+fi
+
+# Backup existing service file if it exists
+if [ -f "/etc/systemd/system/rtsp-camera.service" ]; then
+    echo "Backing up existing service configuration..."
+    sudo cp /etc/systemd/system/rtsp-camera.service /etc/systemd/system/rtsp-camera.service.backup.$(date +%Y%m%d_%H%M%S)
+fi
+
 # Install the service file
 sudo cp rtsp-camera.service /etc/systemd/system/rtsp-camera.service
 
 echo "Setting up monitoring script..."
+# Backup existing monitoring script if it exists
+if [ -f "/home/hansolo/camera-monitor.sh" ]; then
+    echo "Backing up existing monitoring script..."
+    sudo cp /home/hansolo/camera-monitor.sh /home/hansolo/camera-monitor.sh.backup.$(date +%Y%m%d_%H%M%S)
+fi
+
 # Install monitoring script
 sudo cp camera-monitor.sh /home/hansolo/
 sudo chmod +x /home/hansolo/camera-monitor.sh
 sudo chown hansolo:hansolo /home/hansolo/camera-monitor.sh
 
-# Add monitoring to crontab
+# Add monitoring to crontab (avoid duplicates)
 echo "Setting up automatic monitoring (every 5 minutes)..."
-(sudo crontab -l 2>/dev/null; echo "*/5 * * * * /home/hansolo/camera-monitor.sh") | sudo crontab -
+CRON_JOB="*/5 * * * * /home/hansolo/camera-monitor.sh"
+(sudo crontab -l 2>/dev/null | grep -v "/home/hansolo/camera-monitor.sh"; echo "$CRON_JOB") | sudo crontab -
 
-# Stop any existing service
-sudo systemctl stop rtsp-camera 2>/dev/null || true
+# Force reload systemd daemon for any service changes
+echo "Reloading systemd daemon..."
+sudo systemctl daemon-reload
 
 echo "Starting systemd service..."
-sudo systemctl daemon-reload
 sudo systemctl enable rtsp-camera
 sudo systemctl start rtsp-camera
 
@@ -127,3 +194,10 @@ fi
 echo ""
 echo "Setup completed successfully!"
 echo "The system will now automatically monitor and restart the stream if needed."
+
+# Clean up old backup files (keep only last 5)
+echo ""
+echo "Cleaning up old backup files (keeping last 5)..."
+sudo find /home/hansolo/ -name "*.backup.*" -type f | sort | head -n -5 | xargs -r sudo rm -f
+sudo find /etc/systemd/system/ -name "rtsp-camera.service.backup.*" -type f | sort | head -n -5 | xargs -r sudo rm -f
+echo "Cleanup completed."

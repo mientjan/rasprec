@@ -13,9 +13,23 @@ log_message() {
 
 log_message "Starting RTSP camera stream..."
 
-# Check if camera is available
-if ! vcgencmd get_camera | grep -q "detected=1"; then
-    log_message "ERROR: Camera not detected"
+# Check if camera is available using modern detection
+camera_detected=false
+if command -v rpicam-still &> /dev/null; then
+    if rpicam-still --list-cameras 2>/dev/null | grep -q "Available cameras"; then
+        camera_detected=true
+        log_message "Camera detected via rpicam-still"
+    fi
+elif command -v libcamera-still &> /dev/null; then
+    if libcamera-still --list-cameras 2>/dev/null | grep -q "Available cameras"; then
+        camera_detected=true
+        log_message "Camera detected via libcamera-still"
+    fi
+fi
+
+if [ "$camera_detected" = false ]; then
+    log_message "ERROR: No camera detected via modern libcamera tools"
+    log_message "Check: 1) Physical connection 2) /boot/config.txt camera_auto_detect=1 3) Reboot"
     exit 1
 fi
 

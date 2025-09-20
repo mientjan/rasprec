@@ -27,18 +27,41 @@ print_warning() {
 }
 
 echo "1. Checking Camera Status..."
-# Check if camera is enabled and detected
-vcgencmd get_camera &>/dev/null
-if [ $? -eq 0 ]; then
-    CAMERA_STATUS=$(vcgencmd get_camera)
-    echo "   Camera status: $CAMERA_STATUS"
-    if [[ $CAMERA_STATUS == *"detected=1"* ]]; then
-        print_status 0 "Camera detected"
-    else
-        print_status 1 "Camera not detected - check physical connection"
+# Check camera using modern libcamera tools
+camera_detected=false
+camera_method=""
+camera_count=0
+
+if command -v rpicam-still &> /dev/null; then
+    if rpicam-still --list-cameras 2>/dev/null | grep -q "Available cameras"; then
+        camera_detected=true
+        camera_method="rpicam-still"
+        camera_count=$(rpicam-still --list-cameras 2>/dev/null | grep -c ":" || echo "0")
     fi
+elif command -v libcamera-still &> /dev/null; then
+    if libcamera-still --list-cameras 2>/dev/null | grep -q "Available cameras"; then
+        camera_detected=true
+        camera_method="libcamera-still"
+        camera_count=$(libcamera-still --list-cameras 2>/dev/null | grep -c ":" || echo "0")
+    fi
+fi
+
+if [ "$camera_detected" = true ]; then
+    print_status 0 "Camera detected via $camera_method ($camera_count camera(s))"
 else
-    print_status 1 "Cannot check camera status - vcgencmd not available"
+    print_status 1 "No cameras detected via modern libcamera tools"
+    if command -v rpicam-still &> /dev/null || command -v libcamera-still &> /dev/null; then
+        echo "   Modern camera tools available but no cameras found"
+        echo "   Check: 1) Physical connection 2) /boot/config.txt 3) Reboot"
+    else
+        echo "   No modern camera tools found - very old Raspberry Pi OS?"
+    fi
+fi
+
+# Legacy vcgencmd check (for reference, often unreliable on modern systems)
+if command -v vcgencmd &> /dev/null; then
+    CAMERA_STATUS=$(vcgencmd get_camera 2>/dev/null || echo "unavailable")
+    echo "   Legacy vcgencmd status: $CAMERA_STATUS (may be unreliable on modern systems)"
 fi
 
 echo ""

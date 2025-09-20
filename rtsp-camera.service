@@ -6,7 +6,7 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/bin/bash /home/CAMERA_USER_PLACEHOLDER/rtsp-camera.sh
+ExecStart=/usr/local/bin/rtsp-camera.sh
 ExecStartPre=/bin/sleep 10
 Restart=always
 RestartSec=15

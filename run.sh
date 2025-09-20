@@ -175,15 +175,15 @@ fi
 
 echo "Setting up streaming script..."
 # Backup existing script if it exists
-if [ -f "/home/$CAMERA_USER/rtsp-camera.sh" ]; then
+if [ -f "/usr/local/bin/rtsp-camera.sh" ]; then
     echo "Backing up existing streaming script..."
-    sudo cp /home/$CAMERA_USER/rtsp-camera.sh /home/$CAMERA_USER/rtsp-camera.sh.backup.$(date +%Y%m%d_%H%M%S)
+    sudo cp /usr/local/bin/rtsp-camera.sh /usr/local/bin/rtsp-camera.sh.backup.$(date +%Y%m%d_%H%M%S)
 fi
 
-# Copy and install the streaming script
-sudo cp rtsp-camera.sh /home/$CAMERA_USER/rtsp-camera.sh
-sudo chmod +x /home/$CAMERA_USER/rtsp-camera.sh
-sudo chown $CAMERA_USER:$CAMERA_USER /home/$CAMERA_USER/rtsp-camera.sh
+# Copy and install the streaming script to system location
+sudo cp rtsp-camera.sh /usr/local/bin/rtsp-camera.sh
+sudo chmod +x /usr/local/bin/rtsp-camera.sh
+sudo chown root:root /usr/local/bin/rtsp-camera.sh
 
 echo "Installing systemd service..."
 # Stop existing service if running
@@ -198,27 +198,25 @@ if [ -f "/etc/systemd/system/rtsp-camera.service" ]; then
     sudo cp /etc/systemd/system/rtsp-camera.service /etc/systemd/system/rtsp-camera.service.backup.$(date +%Y%m%d_%H%M%S)
 fi
 
-# Install the service file with correct user and paths
-sed -e "s/User=CAMERA_USER_PLACEHOLDER/User=$CAMERA_USER/" \
-    -e "s|/home/CAMERA_USER_PLACEHOLDER/|/home/$CAMERA_USER/|g" \
-    rtsp-camera.service | sudo tee /etc/systemd/system/rtsp-camera.service > /dev/null
+# Install the service file with correct user
+sed "s/User=CAMERA_USER_PLACEHOLDER/User=$CAMERA_USER/" rtsp-camera.service | sudo tee /etc/systemd/system/rtsp-camera.service > /dev/null
 
 echo "Setting up monitoring script..."
 # Backup existing monitoring script if it exists
-if [ -f "/home/$CAMERA_USER/camera-monitor.sh" ]; then
+if [ -f "/usr/local/bin/camera-monitor.sh" ]; then
     echo "Backing up existing monitoring script..."
-    sudo cp /home/$CAMERA_USER/camera-monitor.sh /home/$CAMERA_USER/camera-monitor.sh.backup.$(date +%Y%m%d_%H%M%S)
+    sudo cp /usr/local/bin/camera-monitor.sh /usr/local/bin/camera-monitor.sh.backup.$(date +%Y%m%d_%H%M%S)
 fi
 
-# Install monitoring script
-sudo cp camera-monitor.sh /home/$CAMERA_USER/
-sudo chmod +x /home/$CAMERA_USER/camera-monitor.sh
-sudo chown $CAMERA_USER:$CAMERA_USER /home/$CAMERA_USER/camera-monitor.sh
+# Install monitoring script to system location
+sudo cp camera-monitor.sh /usr/local/bin/camera-monitor.sh
+sudo chmod +x /usr/local/bin/camera-monitor.sh
+sudo chown root:root /usr/local/bin/camera-monitor.sh
 
 # Add monitoring to crontab (avoid duplicates)
 echo "Setting up automatic monitoring (every 5 minutes)..."
-CRON_JOB="*/5 * * * * /home/$CAMERA_USER/camera-monitor.sh"
-(sudo crontab -l 2>/dev/null | grep -v "/home/$CAMERA_USER/camera-monitor.sh"; echo "$CRON_JOB") | sudo crontab -
+CRON_JOB="*/5 * * * * /usr/local/bin/camera-monitor.sh"
+(sudo crontab -l 2>/dev/null | grep -v "camera-monitor.sh"; echo "$CRON_JOB") | sudo crontab -
 
 # Force reload systemd daemon for any service changes
 echo "Reloading systemd daemon..."
@@ -272,6 +270,6 @@ echo "The system will now automatically monitor and restart the stream if needed
 # Clean up old backup files (keep only last 5)
 echo ""
 echo "Cleaning up old backup files (keeping last 5)..."
-sudo find /home/$CAMERA_USER/ -name "*.backup.*" -type f | sort | head -n -5 | xargs -r sudo rm -f
+sudo find /usr/local/bin/ -name "*.backup.*" -type f | sort | head -n -5 | xargs -r sudo rm -f
 sudo find /etc/systemd/system/ -name "rtsp-camera.service.backup.*" -type f | sort | head -n -5 | xargs -r sudo rm -f
 echo "Cleanup completed."

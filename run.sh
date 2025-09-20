@@ -198,8 +198,10 @@ if [ -f "/etc/systemd/system/rtsp-camera.service" ]; then
     sudo cp /etc/systemd/system/rtsp-camera.service /etc/systemd/system/rtsp-camera.service.backup.$(date +%Y%m%d_%H%M%S)
 fi
 
-# Install the service file with correct user
-sed "s/User=CAMERA_USER_PLACEHOLDER/User=$CAMERA_USER/" rtsp-camera.service | sudo tee /etc/systemd/system/rtsp-camera.service > /dev/null
+# Install the service file with correct user and paths
+sed -e "s/User=CAMERA_USER_PLACEHOLDER/User=$CAMERA_USER/" \
+    -e "s|/home/CAMERA_USER_PLACEHOLDER/|/home/$CAMERA_USER/|g" \
+    rtsp-camera.service | sudo tee /etc/systemd/system/rtsp-camera.service > /dev/null
 
 echo "Setting up monitoring script..."
 # Backup existing monitoring script if it exists

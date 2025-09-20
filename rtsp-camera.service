@@ -1,16 +1,47 @@
 [Unit]
 Description=Raspberry Pi RTSP Stream
 After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
+Type=simple
 ExecStart=/home/hansolo/rtsp-camera.sh
+ExecStartPre=/bin/sleep 10
 Restart=always
-RestartSec=5
+RestartSec=15
 User=hansolo
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=rtsp-stream
+Group=video
+
+# Resource limits for stability
 MemoryMax=256M
 MemoryAccounting=true
+CPUQuota=80%
+
+# Watchdog for detecting hangs
+WatchdogSec=300
+NotifyAccess=none
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rtsp-stream
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp /var/log
+PrivateTmp=true
+
+# Environment
+Environment=HOME=/home/hansolo
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+# Kill settings
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
 [Install]
 WantedBy=multi-user.target

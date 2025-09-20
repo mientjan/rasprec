@@ -31,22 +31,31 @@ A lightweight RTSP camera streaming solution for Raspberry Pi Zero 2 W that capt
    cd rasprec
    ```
 
-2. **Run the setup script** (requires sudo privileges):
+2. **Run the setup script**:
    ```bash
    chmod +x run.sh
-   sudo ./run.sh
+   ./run.sh
    ```
 
    This script will:
-   - Install VLC dependencies
-   - Create the streaming script
-   - Set up systemd service
+   - Install all dependencies (VLC, ffmpeg, monitoring tools)
+   - Copy stable streaming configuration to `/home/hansolo/`
+   - Install enhanced systemd service with stability features
+   - Set up automatic monitoring every 5 minutes
+   - Create user 'hansolo' if needed
    - Start the RTSP stream automatically
 
 3. **Verify the service is running**:
    ```bash
    sudo systemctl status rtsp-camera
    ```
+
+The setup automatically includes all stability features for long-term operation:
+- ✅ Enhanced stability configuration
+- ✅ Automatic monitoring every 5 minutes  
+- ✅ Memory leak prevention
+- ✅ Thermal monitoring and auto-restart
+- ✅ Smart restart logic with backoff
 
 ## Usage
 
@@ -103,8 +112,8 @@ sudo journalctl -u rtsp-camera -f
 ### Video Settings
 
 The default configuration streams at:
-- **Resolution**: 720x480
-- **Framerate**: 15 FPS
+- **Resolution**: 720x480 (4:3 aspect ratio)
+- **Framerate**: 24 FPS
 - **Format**: H.264
 
 To modify these settings, edit the `rtsp-camera.sh` file:
@@ -114,70 +123,41 @@ sudo nano /home/hansolo/rtsp-camera.sh
 
 ### Service Configuration
 
-The systemd service is configured with:
-- **Memory limit**: 256MB
-- **Auto-restart**: On failure
-- **Restart delay**: 5 seconds
-- **User**: hansolo
+The systemd service is configured with enhanced stability features:
+- **Memory limit**: 256MB with accounting
+- **CPU quota**: 80% to prevent system overload
+- **Watchdog**: 300 second hang detection
+- **Auto-restart**: On failure with intelligent backoff
+- **Restart delay**: 15 seconds with burst limits
+- **Security hardening**: Protected system and home directories
+- **User**: hansolo (video group)
 
 ## File Structure
 
 ```
 rasprec/
 ├── README.md                    # This documentation
-├── run.sh                       # Setup and installation script
-├── rtsp-camera.sh               # Main streaming script
-├── rtsp-camera.service          # Systemd service configuration
-├── rtsp-camera-stable.sh        # Improved streaming script for long-term stability
-├── rtsp-camera-stable.service   # Enhanced service config with stability features
+├── run.sh                       # Main setup script with stability features
+├── rtsp-camera.sh               # Enhanced streaming script with stability features
+├── rtsp-camera.service          # Enhanced systemd service configuration
 ├── camera-monitor.sh            # Stream monitoring and auto-restart script
 ├── diagnose.sh                  # System diagnostic tool
 ├── test.sh                      # Test script (utility)
 └── package.json                 # Project metadata
 ```
 
-## Long-Term Stability Setup
+## Stability Features
 
-For production use where the camera needs to run continuously for days/weeks, use the enhanced stability configuration:
+The setup script automatically configures the following stability features:
 
-### 1. Install Stable Configuration
-
-```bash
-# Copy stable scripts
-sudo cp rtsp-camera-stable.sh /home/hansolo/
-sudo cp rtsp-camera-stable.service /etc/systemd/system/
-sudo chmod +x /home/hansolo/rtsp-camera-stable.sh
-
-# Install monitoring script
-sudo cp camera-monitor.sh /home/hansolo/
-sudo chmod +x /home/hansolo/camera-monitor.sh
-
-# Enable stable service
-sudo systemctl daemon-reload
-sudo systemctl disable rtsp-camera  # Disable basic version
-sudo systemctl enable rtsp-camera-stable
-sudo systemctl start rtsp-camera-stable
-```
-
-### 2. Setup Automatic Monitoring
-
-```bash
-# Add monitoring to crontab
-sudo crontab -e
-# Add this line:
-*/5 * * * * /home/hansolo/camera-monitor.sh
-```
-
-### 3. Stability Features
-
-The stable configuration includes:
-- **Memory leak prevention** with resource limits
-- **Automatic restart** on failures with backoff
-- **Enhanced error handling** and logging
+- **Memory leak prevention** with resource limits and watchdog
+- **Automatic restart** on failures with intelligent backoff
+- **Enhanced error handling** and comprehensive logging  
 - **Thermal monitoring** and throttling detection
-- **Stream health checks** every 5 minutes
-- **Improved VLC parameters** for stability
-- **Signal handling** for clean shutdowns
+- **Stream health checks** every 5 minutes via cron
+- **Improved VLC parameters** optimized for long-term stability
+- **Signal handling** for clean process shutdowns
+- **GPU memory optimization** with automatic checks
 
 ## Network Configuration
 

@@ -61,7 +61,7 @@ This will automatically:
 The setup script will:
 - Install all dependencies (VLC, ffmpeg, monitoring tools)
 - Prompt for username and create dedicated camera user if needed
-- Copy stable streaming configuration to user's home directory
+- Install streaming scripts to system location (`/usr/local/bin`)
 - Install enhanced systemd service with stability features
 - Set up automatic monitoring every 5 minutes
 - Start the RTSP stream automatically
@@ -138,11 +138,10 @@ The default configuration streams at:
 - **Framerate**: 24 FPS
 - **Format**: H.264
 
-To modify these settings, edit the `rtsp-camera.sh` file:
+To modify these settings, edit the streaming script:
 ```bash
-sudo nano /home/USERNAME/rtsp-camera.sh
+sudo nano /usr/local/bin/rtsp-camera.sh
 ```
-(Replace USERNAME with your camera user)
 
 ### GPU Memory Configuration
 
@@ -178,6 +177,7 @@ The systemd service is configured with enhanced stability features:
 - **Restart delay**: 15 seconds with burst limits
 - **Security hardening**: Protected system and home directories
 - **User**: Dedicated camera user (video group)
+- **Script location**: `/usr/local/bin/rtsp-camera.sh` (system location for reliability)
 
 ## File Structure
 
@@ -193,6 +193,25 @@ rasprec/
 ├── diagnose.sh                  # System diagnostic tool
 └── package.json                 # Project metadata
 ```
+
+### Installed System Files
+
+After running the setup, scripts are installed to standard system locations:
+
+```
+/usr/local/bin/
+├── rtsp-camera.sh               # Main streaming script (system location)
+└── camera-monitor.sh            # Monitoring script (system location)
+
+/etc/systemd/system/
+└── rtsp-camera.service          # Systemd service configuration
+```
+
+**Why System Locations?**
+- **Reliable systemd execution**: No permission issues with home directories
+- **Standard Unix practice**: `/usr/local/bin` is the standard location for local system scripts
+- **Security**: Avoids systemd security restrictions on user home directories
+- **Always in PATH**: System locations are always accessible to services
 
 ## Stability Features
 
@@ -275,7 +294,7 @@ sudo reboot
 **Camera driver timeout issues:**
 ```bash
 # Add camera timeout parameters to streaming script
-sudo nano /home/USERNAME/rtsp-camera.sh
+sudo nano /usr/local/bin/rtsp-camera.sh
 # Modify rpicam-vid command:
 rpicam-vid --timeout 0 --framerate 15 --width 720 --height 480 -n --flush --inline -o - | \
 cvlc stream:///dev/stdin --sout '#rtp{sdp=rtsp://:8554/stream1}' :demux=h264 --intf dummy --no-audio --no-video-title-show --no-stats
@@ -290,8 +309,8 @@ vcgencmd get_throttled
 
 **Add automatic restart mechanism:**
 ```bash
-# Create a monitoring script
-sudo nano /home/USERNAME/camera-monitor.sh
+# Edit the monitoring script
+sudo nano /usr/local/bin/camera-monitor.sh
 ```
 
 **Create camera monitoring script:**
@@ -309,7 +328,7 @@ fi
 ```bash
 sudo crontab -e
 # Add this line to check every 5 minutes:
-*/5 * * * * /home/USERNAME/camera-monitor.sh >> /var/log/camera-monitor.log 2>&1
+*/5 * * * * /usr/local/bin/camera-monitor.sh >> /var/log/camera-monitor.log 2>&1
 ```
 
 #### Camera Not Detected (Initial Setup)
@@ -489,7 +508,7 @@ sudo systemctl daemon-reload
 **Fix resolution inconsistency:**
 Edit the camera script to match desired resolution:
 ```bash
-sudo nano /home/USERNAME/rtsp-camera.sh
+sudo nano /usr/local/bin/rtsp-camera.sh
 # Ensure resolution matches your needs (720x480 or 720x720)
 ```
 
@@ -497,8 +516,8 @@ sudo nano /home/USERNAME/rtsp-camera.sh
 
 **Verify script location and permissions:**
 ```bash
-ls -la /home/USERNAME/rtsp-camera.sh
-chmod +x /home/USERNAME/rtsp-camera.sh
+ls -la /usr/local/bin/rtsp-camera.sh
+sudo chmod +x /usr/local/bin/rtsp-camera.sh
 ```
 
 ### Network Diagnostics

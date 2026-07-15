@@ -165,7 +165,7 @@ else
     echo "Downloading MediaMTX for this architecture..."
     # Map uname -m to MediaMTX release arch suffix
     case "$(uname -m)" in
-        aarch64|arm64) MTX_ARCH="linux_arm64v8" ;;
+        aarch64|arm64) MTX_ARCH="linux_arm64" ;;
         armv7l)        MTX_ARCH="linux_armv7" ;;
         armv6l)        MTX_ARCH="linux_armv6" ;;
         x86_64|amd64)  MTX_ARCH="linux_amd64" ;;

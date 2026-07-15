@@ -157,7 +157,7 @@ echo "Stream settings: ${WIDTH}x${HEIGHT} @ ${FRAMERATE}fps, ${BITRATE} bps"
 echo ""
 echo "Installing dependencies..."
 sudo apt-get update
-sudo apt-get install -y curl tar ffmpeg   # ffmpeg gives ffprobe for verification
+sudo apt-get install -y curl tar ffmpeg bc   # ffprobe for verification; bc for diagnose.sh
 
 if command -v mediamtx &> /dev/null || [ -x /usr/local/bin/mediamtx ]; then
     echo "✓ MediaMTX already installed ($(/usr/local/bin/mediamtx --version 2>/dev/null | head -1))"

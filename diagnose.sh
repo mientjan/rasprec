@@ -141,10 +141,10 @@ fi
 
 echo ""
 echo "8. Checking System Resources..."
-# Check memory usage
+# Check memory usage (awk comparison — no bc dependency)
 MEM_USAGE=$(free | grep Mem | awk '{printf "%.1f", $3/$2 * 100.0}')
 echo "   Memory usage: ${MEM_USAGE}%"
-if (( $(echo "$MEM_USAGE > 80" | bc -l) )); then
+if awk "BEGIN{exit !($MEM_USAGE > 80)}"; then
     print_warning "High memory usage detected"
 fi
 
@@ -152,7 +152,7 @@ fi
 if command -v vcgencmd &>/dev/null; then
     TEMP=$(vcgencmd measure_temp | cut -d'=' -f2 | cut -d"'" -f1)
     echo "   CPU Temperature: ${TEMP}°C"
-    if (( $(echo "$TEMP > 70" | bc -l) )); then
+    if awk "BEGIN{exit !($TEMP > 70)}"; then
         print_warning "High CPU temperature detected"
     fi
 fi

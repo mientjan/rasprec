@@ -1,0 +1,70 @@
+# RaspRec MediaMTX configuration
+#
+# MediaMTX serves the Raspberry Pi camera over RTSP (:8554) and WebRTC (:8889)
+# using its NATIVE rpiCamera source (libcamera) — no rpicam-vid pipe, no VLC.
+# This replaces the old cvlc pipeline, which leaked memory and dropped the
+# stream after hours/days.
+#
+# run.sh patches the PLACEHOLDER values (resolution/bitrate/fps + credentials)
+# for the detected hardware. Do not commit real credentials to this template.
+#
+# SECURITY: this stream is reached only over the Tailscale VPN. No router ports
+# are forwarded. Auth below is defense-in-depth in case something on the LAN is
+# compromised. NEVER expose ports 8554/8889 to the public internet.
+
+###############################################
+# Logging (keep light to reduce SD-card wear)
+logLevel: info
+logDestinations: [stdout]
+
+###############################################
+# Authentication — require a username + password to read the stream.
+# The internal rpiCamera source publishes locally and does not use these.
+authMethod: internal
+authInternalUsers:
+  - user: CAMERA_STREAM_USER_PLACEHOLDER
+    pass: CAMERA_STREAM_PASS_PLACEHOLDER
+    ips: []
+    permissions:
+      - action: read
+      - action: playback
+
+###############################################
+# Control/metrics endpoints stay OFF (smaller attack surface).
+api: no
+metrics: no
+pprof: no
+playback: no
+
+###############################################
+# RTSP — force TCP. Avoids H.264 decode errors from UDP packet loss and is
+# more reliable across the VPN.
+rtsp: yes
+rtspTransports: [tcp]
+rtspAddress: :8554
+
+###############################################
+# WebRTC — lets you view in a phone browser (no app) over the tailnet.
+# Media is always encrypted; the handshake rides the WireGuard tunnel.
+# NOTE: over Tailscale, RTSP (:8554) is the reliable primary. If WebRTC won't
+# connect through the VPN, add your Tailscale IP so it advertises a reachable
+# ICE candidate, e.g.:  webrtcAdditionalHosts: [100.x.y.z]
+webrtc: yes
+webrtcAddress: :8889
+
+# HLS/RTMP not needed for one-way phone viewing.
+hls: no
+rtmp: no
+
+###############################################
+# Camera path. View at:
+#   rtsp://<tailscale-name>:8554/cam   (VLC app)
+#   http://<tailscale-name>:8889/cam   (browser, WebRTC)
+paths:
+  cam:
+    source: rpiCamera
+    rpiCameraWidth: RPI_WIDTH_PLACEHOLDER
+    rpiCameraHeight: RPI_HEIGHT_PLACEHOLDER
+    rpiCameraFPS: RPI_FPS_PLACEHOLDER
+    rpiCameraBitrate: RPI_BITRATE_PLACEHOLDER
+    rpiCameraCodec: hardwareH264

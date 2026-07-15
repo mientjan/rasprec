@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# ============================================================================
+# DEPRECATED — kept for reference only. NOT installed by run.sh anymore.
+# This cron watchdog was a band-aid for the cvlc memory leak. MediaMTX plus
+# systemd `Restart=always` (mediamtx.service) makes it unnecessary.
+# ============================================================================
+
 # Camera Stream Monitor Script
 # Monitors RTSP stream health and restarts service if needed
 # Usage: Run via cron every 5 minutes

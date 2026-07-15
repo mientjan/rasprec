@@ -79,19 +79,20 @@ echo "Location: $INSTALL_DIR"
 echo ""
 
 # Check if this is an update or fresh install for messaging
-if systemctl is-active --quiet rtsp-camera 2>/dev/null; then
-    echo "🔄 Existing RTSP service detected - this appears to be an update"
+if systemctl is-active --quiet mediamtx 2>/dev/null || systemctl is-active --quiet rtsp-camera 2>/dev/null; then
+    echo "🔄 Existing camera service detected - this appears to be an update"
     echo "The setup script will:"
-    echo "- Update all components with the latest versions"
+    echo "- Install/update MediaMTX and rewrite its config"
     echo "- Backup existing configurations"
-    echo "- Restart services with new code"
-    echo "- Maintain existing settings and monitoring"
+    echo "- Migrate off the old cvlc service if present"
+    echo "- Restart the stream with the new setup"
 else
     echo "🆕 Fresh installation detected"
     echo "The setup script will:"
-    echo "- Install all dependencies (VLC, ffmpeg, monitoring tools)"
-    echo "- Configure RTSP streaming with stability features"
-    echo "- Set up automatic monitoring every 5 minutes"
+    echo "- Install MediaMTX + ffmpeg"
+    echo "- Configure secure RTSP/WebRTC streaming with a viewing password"
+    echo "- Offer Tailscale for secure remote access (no open router ports)"
+    echo "- Offer reliability hardening (watchdog + log2ram)"
     echo "- Create necessary users and permissions"
     echo "- Start the camera stream automatically"
 fi

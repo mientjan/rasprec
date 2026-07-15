@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# ============================================================================
+# DEPRECATED — kept for reference only. NOT installed by run.sh anymore.
+# The cvlc pipeline leaked memory and dropped the stream after hours/days.
+# RaspRec now uses MediaMTX (see mediamtx.yml / mediamtx.service). Do not use.
+# ============================================================================
+
 # RTSP Camera Streaming Script
 # Enhanced for long-term stability with memory leak prevention and driver timeout handling
 

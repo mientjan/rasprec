@@ -85,54 +85,48 @@ else
 fi
 
 echo ""
-echo "4. Checking VLC Installation..."
-which cvlc &>/dev/null
-print_status $? "VLC (cvlc) is installed"
+echo "4. Checking MediaMTX Installation..."
+which mediamtx &>/dev/null || [ -x /usr/local/bin/mediamtx ]
+print_status $? "MediaMTX is installed"
 
-if which cvlc &>/dev/null; then
-    VLC_VERSION=$(cvlc --version 2>/dev/null | head -n1)
-    echo "   VLC Version: $VLC_VERSION"
+if [ -x /usr/local/bin/mediamtx ]; then
+    MTX_VERSION=$(/usr/local/bin/mediamtx --version 2>/dev/null | head -n1)
+    echo "   MediaMTX Version: $MTX_VERSION"
 fi
 
 echo ""
-echo "5. Checking RTSP Camera Service..."
-systemctl is-active rtsp-camera &>/dev/null
-print_status $? "RTSP camera service is running"
+echo "5. Checking MediaMTX Service..."
+systemctl is-active mediamtx &>/dev/null
+print_status $? "MediaMTX service is running"
 
-systemctl is-enabled rtsp-camera &>/dev/null
-print_status $? "RTSP camera service is enabled for auto-start"
+systemctl is-enabled mediamtx &>/dev/null
+print_status $? "MediaMTX service is enabled for auto-start"
 
-if systemctl is-active rtsp-camera &>/dev/null; then
-    echo "   Service has been running for: $(systemctl show rtsp-camera --property=ActiveEnterTimestamp --value | cut -d' ' -f2-)"
+if systemctl is-active mediamtx &>/dev/null; then
+    echo "   Service has been running for: $(systemctl show mediamtx --property=ActiveEnterTimestamp --value | cut -d' ' -f2-)"
 fi
 
 echo ""
 echo "6. Checking Service Configuration..."
-if [ -f "/etc/systemd/system/rtsp-camera.service" ]; then
+if [ -f "/etc/systemd/system/mediamtx.service" ]; then
     print_status 0 "Service file exists"
-    
+
     # Check if user exists
-    SERVICE_USER=$(grep "User=" /etc/systemd/system/rtsp-camera.service | cut -d'=' -f2)
+    SERVICE_USER=$(grep "User=" /etc/systemd/system/mediamtx.service | cut -d'=' -f2)
     if id "$SERVICE_USER" &>/dev/null; then
         print_status 0 "Service user '$SERVICE_USER' exists"
     else
         print_status 1 "Service user '$SERVICE_USER' does not exist"
     fi
-    
-    # Check if script exists
-    SCRIPT_PATH=$(grep "ExecStart=" /etc/systemd/system/rtsp-camera.service | cut -d'=' -f2)
-    if [ -f "$SCRIPT_PATH" ]; then
-        print_status 0 "Streaming script exists at $SCRIPT_PATH"
-        if [ -x "$SCRIPT_PATH" ]; then
-            print_status 0 "Streaming script is executable"
-        else
-            print_status 1 "Streaming script is not executable"
-        fi
+
+    # Check if MediaMTX config exists
+    if [ -f "/usr/local/etc/mediamtx.yml" ]; then
+        print_status 0 "MediaMTX config exists at /usr/local/etc/mediamtx.yml"
     else
-        print_status 1 "Streaming script not found at $SCRIPT_PATH"
+        print_status 1 "MediaMTX config not found at /usr/local/etc/mediamtx.yml"
     fi
 else
-    print_status 1 "Service file not found"
+    print_status 1 "Service file not found (has run.sh been run?)"
 fi
 
 echo ""
@@ -194,23 +188,33 @@ else
 fi
 
 echo ""
-echo "10. Recent Service Logs..."
-if systemctl is-active rtsp-camera &>/dev/null; then
-    echo "   Last 5 log entries:"
-    journalctl -u rtsp-camera -n 5 --no-pager -q
+echo "10. Checking Tailscale (secure remote access)..."
+if command -v tailscale &>/dev/null; then
+    if tailscale status &>/dev/null; then
+        print_status 0 "Tailscale is up"
+        TS_NAME=$(tailscale status --json 2>/dev/null | grep -o '"DNSName":"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/\.$//')
+        TS_IP=$(tailscale ip -4 2>/dev/null | head -1)
+        [ -n "$TS_NAME" ] && echo "   MagicDNS name: $TS_NAME"
+        [ -n "$TS_IP" ] && echo "   Tailscale IP:  $TS_IP"
+    else
+        print_status 1 "Tailscale installed but not connected (run: sudo tailscale up --ssh)"
+    fi
 else
-    echo "   Service not running - showing last failed logs:"
-    journalctl -u rtsp-camera -n 5 --no-pager -q
+    print_warning "Tailscale not installed — run ./setup-tailscale.sh for secure remote access"
 fi
+
+echo ""
+echo "11. Recent Service Logs..."
+echo "   Last 5 MediaMTX log entries:"
+journalctl -u mediamtx -n 5 --no-pager -q
 
 echo ""
 echo "=== Diagnostic Summary ==="
 echo "System IP Address: $IP_ADDR"
-echo "RTSP Stream URL: rtsp://$IP_ADDR:8554/stream1"
+echo "LAN Stream URL:  rtsp://$IP_ADDR:8554/cam   (also http://$IP_ADDR:8889/cam for WebRTC)"
+[ -n "$TS_NAME" ] && echo "Remote (Tailscale): rtsp://$TS_NAME:8554/cam"
+echo ""
+echo "SECURITY: reach the stream over Tailscale only. Never forward ports 8554/8889."
 echo ""
 echo "If issues persist, check the full service logs with:"
-echo "sudo journalctl -u rtsp-camera -f"
-echo ""
-echo "For manual testing, try:"
-echo "sudo systemctl stop rtsp-camera"
-echo "sudo -u $SERVICE_USER $SCRIPT_PATH"
+echo "sudo journalctl -u mediamtx -f"

@@ -1,3 +1,4 @@
+# DEPRECATED — replaced by mediamtx.service. Kept for reference only.
 [Unit]
 Description=Raspberry Pi RTSP Stream
 After=network.target

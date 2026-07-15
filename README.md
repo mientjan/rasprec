@@ -1,27 +1,52 @@
-# RaspRec - Raspberry Pi RTSP Camera Streaming
+# RaspRec - Raspberry Pi Camera Streaming
 
-A lightweight RTSP camera streaming solution for Raspberry Pi Zero 2 W that captures video from the camera module and streams it over the network.
+A lightweight camera streaming solution for Raspberry Pi that captures video
+from the camera module and streams it over the network — with **secure remote
+access over Tailscale** and no open router ports.
+
+Streaming is handled by [MediaMTX](https://github.com/bluenviron/mediamtx)
+using its native `rpiCamera` (libcamera) source. This replaced the old
+`cvlc`/`rpicam-vid` pipeline, which leaked memory and dropped the stream after
+hours or days.
 
 ## Features
 
-- **Real-time RTSP streaming** via VLC on port 8554
-- **Automatic startup** using systemd service
-- **Low resource usage** optimized for Raspberry Pi Zero 2 W
-- **Configurable resolution and framerate**
-- **Memory-limited service** (256MB max) for stability
+- **Real-time RTSP (`:8554`) + WebRTC (`:8889`) streaming** via MediaMTX
+- **Secure remote access** over Tailscale (WireGuard VPN) — no port forwarding,
+  invisible to the public internet
+- **Stream authentication** (username/password) as defense in depth
+- **Automatic startup + self-restart** using systemd (`Restart=always`)
+- **Low resource usage** — MediaMTX is a single zero-dependency binary
+- **Optional hardening**: hardware watchdog + log2ram for unattended 24/7 use
+
+> **Security:** never forward ports 8554/8889 on your router. Tailscale makes it
+> unnecessary and keeps the camera private. See
+> [Secure Remote Access](#secure-remote-access-tailscale).
 
 ## Hardware Requirements
 
-- Raspberry Pi Zero 2 W
-- Raspberry Pi Camera Module (v1, v2, or HQ Camera)
-- MicroSD card (8GB+ recommended)
-- Stable power supply (2.5A recommended)
+### Supported Raspberry Pi Models
+- **Raspberry Pi Zero 2 W** (720p streaming)
+- **Raspberry Pi 3 Model B/B+** (1080p streaming) 
+- **Raspberry Pi 4 Model B** (1080p streaming, 30fps)
+- **Raspberry Pi 5** (1080p streaming, 30fps)
+- **Raspberry Pi Zero** (480p streaming, limited performance)
+
+### Supported Camera Modules
+- **Camera Module v1** (OV5647) - 5MP, up to 1080p
+- **Camera Module v2** (IMX219) - 8MP, up to 1080p, better low light
+- **HQ Camera** (IMX477) - 12MP, up to 4K (limited by Pi performance)
+
+### Other Requirements
+- MicroSD card (8GB+ recommended, 16GB+ for Pi 4/5)
+- Stable power supply (2.5A for Pi 3, 3A for Pi 4/5)
 
 ## Software Requirements
 
-- Raspberry Pi OS (Bullseye or newer)
-- VLC media player
-- rpicam-vid (included in modern Raspberry Pi OS)
+- Raspberry Pi OS (Bookworm or newer recommended)
+- libcamera / rpicam-apps (included in modern Raspberry Pi OS)
+- MediaMTX (installed automatically by `run.sh`)
+- Tailscale (installed by `setup-tailscale.sh`, for secure remote access)
 
 ## Installation
 
@@ -59,89 +84,99 @@ This will automatically:
 ### What the Setup Does
 
 The setup script will:
-- Install all dependencies (VLC, ffmpeg, monitoring tools)
-- Prompt for username and create dedicated camera user if needed
-- Install streaming scripts to system location (`/usr/local/bin`)
-- Install enhanced systemd service with stability features
-- Set up automatic monitoring every 5 minutes
-- Start the RTSP stream automatically
+- **Auto-detect** your Raspberry Pi model and camera type
+- **Optimize** streaming parameters for your hardware capabilities
+- Install MediaMTX and ffmpeg
+- Prompt for a streaming user and a stream viewing password
+- Write the MediaMTX config to `/usr/local/etc/mediamtx.yml`
+- Install the `mediamtx` systemd service (auto-restart on failure)
+- Offer to set up **Tailscale** for secure remote access (recommended)
+- Offer to apply **reliability hardening** (watchdog + log2ram)
+- Start the stream automatically
 
 ### Verify Installation
 
 ```bash
-sudo systemctl status rtsp-camera
+sudo systemctl status mediamtx
+./diagnose.sh
 ```
-
-The setup automatically includes all stability features for long-term operation:
-- ✅ Enhanced stability configuration
-- ✅ Automatic monitoring every 5 minutes  
-- ✅ Memory leak prevention
-- ✅ Thermal monitoring and auto-restart
-- ✅ Smart restart logic with backoff
 
 ## Usage
 
 ### Accessing the Stream
 
-Once installed and running, you can access the RTSP stream at:
+The stream path is `/cam` and requires the username/password you set during setup.
+
+**On the local network:**
 ```
-rtsp://[PI_IP_ADDRESS]:8554/stream1
+rtsp://[USER]:[PASS]@[PI_IP_ADDRESS]:8554/cam     # RTSP (VLC app, ffplay)
+http://[PI_IP_ADDRESS]:8889/cam                   # WebRTC (any browser)
+```
+
+**Remotely from your phone (recommended, over Tailscale):** use the MagicDNS
+name printed by `setup-tailscale.sh`, e.g.
+```
+rtsp://moms-camera:8554/cam      # in the VLC mobile app
+http://moms-camera:8889/cam      # in a phone browser (WebRTC, no app)
 ```
 
 ### Viewing the Stream
 
-You can view the stream using various RTSP-compatible players:
+**VLC (desktop or mobile app):** Media → Open Network Stream → paste the RTSP URL.
+VLC will prompt for the username/password.
 
-**VLC Media Player:**
-1. Open VLC
-2. Go to Media → Open Network Stream
-3. Enter the RTSP URL above
+**Browser (WebRTC):** open the `http://…:8889/cam` URL — nothing to install.
 
 **FFplay:**
 ```bash
-ffplay rtsp://[PI_IP_ADDRESS]:8554/stream1
+ffplay "rtsp://[USER]:[PASS]@[PI_IP_ADDRESS]:8554/cam"
 ```
-
-**OBS Studio:**
-1. Add Source → Media Source
-2. Uncheck "Local File"
-3. Enter the RTSP URL
 
 ### Service Management
 
 **Start the service:**
 ```bash
-sudo systemctl start rtsp-camera
+sudo systemctl start mediamtx
 ```
 
 **Stop the service:**
 ```bash
-sudo systemctl stop rtsp-camera
+sudo systemctl stop mediamtx
 ```
 
 **Enable auto-start on boot:**
 ```bash
-sudo systemctl enable rtsp-camera
+sudo systemctl enable mediamtx
 ```
 
 **View service logs:**
 ```bash
-sudo journalctl -u rtsp-camera -f
+sudo journalctl -u mediamtx -f
 ```
 
 ## Configuration
 
 ### Video Settings
 
-The default configuration streams at:
-- **Resolution**: 720x480 (4:3 aspect ratio)
-- **Framerate**: 24 FPS
-- **Format**: H.264
+The setup script automatically optimizes video settings based on your hardware:
 
-To modify these settings, edit the streaming script:
+#### Automatic Optimization Table
+| Pi Model | Camera | Resolution | Bitrate | FPS | Notes |
+|----------|--------|------------|---------|-----|-------|
+| **Pi 4/5** | Any | 1080p | 3-4 Mbps | 30 | Maximum performance |
+| **Pi 3** | v2/HQ | 1080p | 3 Mbps | 24 | High quality streaming |
+| **Pi 3** | v1 | 720p | 2 Mbps | 24 | Balanced performance |
+| **Pi Zero 2W** | Any | 720p | 2 Mbps | 24 | Optimized for hardware |
+| **Pi Zero** | Any | 480p | 1 Mbps | 15 | Limited performance |
+
+#### Manual Configuration
+To modify these settings, edit the MediaMTX config and restart the service:
 ```bash
-sudo nano /usr/local/bin/rtsp-camera.sh
+sudo nano /usr/local/etc/mediamtx.yml     # edit rpiCameraWidth/Height/FPS/Bitrate
+sudo systemctl restart mediamtx
 ```
+
+**Note**: The setup script detects your hardware and applies optimal settings automatically. Manual changes may affect performance and stability.
 
 ### GPU Memory Configuration
 
@@ -169,74 +204,115 @@ vcgencmd get_mem gpu
 
 ### Service Configuration
 
-The systemd service is configured with enhanced stability features:
-- **Memory limit**: 256MB with accounting
-- **CPU quota**: 80% to prevent system overload
-- **Watchdog**: 300 second hang detection
-- **Auto-restart**: On failure with intelligent backoff
-- **Restart delay**: 15 seconds with burst limits
-- **Security hardening**: Protected system and home directories
-- **User**: Dedicated camera user (video group)
-- **Script location**: `/usr/local/bin/rtsp-camera.sh` (system location for reliability)
+The `mediamtx` systemd service is configured with:
+- **Memory limit**: 200MB with accounting
+- **Auto-restart**: `Restart=always`, 5s delay, with start-burst limits
+- **Security hardening**: `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`
+- **User**: streaming user (in the `video` group)
+- **Binary**: `/usr/local/bin/mediamtx`, config `/usr/local/etc/mediamtx.yml`
 
 ## File Structure
 
 ```
 rasprec/
 ├── README.md                    # This documentation
-├── install.sh                   # Quick installation script for Raspberry Pi
-├── run.sh                       # Main setup script with stability features
-├── setup-gpu-memory.sh          # GPU memory configuration helper script
-├── rtsp-camera.sh               # Enhanced streaming script with stability features
-├── rtsp-camera.service          # Enhanced systemd service configuration
-├── camera-monitor.sh            # Stream monitoring and auto-restart script
+├── install.sh                   # Quick installation / update bootstrap
+├── run.sh                       # Main setup script (MediaMTX + Tailscale)
+├── mediamtx.yml                 # MediaMTX config template (rpiCamera source)
+├── mediamtx.service             # systemd unit for MediaMTX
+├── setup-tailscale.sh           # Secure remote access (Tailscale VPN)
+├── setup-hardening.sh           # Watchdog + log2ram for unattended use
+├── setup-gpu-memory.sh          # GPU memory configuration helper
 ├── diagnose.sh                  # System diagnostic tool
-└── package.json                 # Project metadata
+├── package.json                 # Project metadata
+├── rtsp-camera.sh               # DEPRECATED (old cvlc streamer)
+├── rtsp-camera.service          # DEPRECATED (old cvlc service)
+└── camera-monitor.sh            # DEPRECATED (old cron watchdog)
 ```
 
 ### Installed System Files
 
-After running the setup, scripts are installed to standard system locations:
+After running the setup:
 
 ```
-/usr/local/bin/
-├── rtsp-camera.sh               # Main streaming script (system location)
-└── camera-monitor.sh            # Monitoring script (system location)
-
-/etc/systemd/system/
-└── rtsp-camera.service          # Systemd service configuration
+/usr/local/bin/mediamtx           # MediaMTX binary
+/usr/local/etc/mediamtx.yml       # MediaMTX config (mode 640, holds stream password)
+/etc/systemd/system/mediamtx.service
 ```
-
-**Why System Locations?**
-- **Reliable systemd execution**: No permission issues with home directories
-- **Standard Unix practice**: `/usr/local/bin` is the standard location for local system scripts
-- **Security**: Avoids systemd security restrictions on user home directories
-- **Always in PATH**: System locations are always accessible to services
 
 ## Stability Features
 
-The setup script automatically configures the following stability features:
-
-- **Memory leak prevention** with resource limits and watchdog
-- **Automatic restart** on failures with intelligent backoff
-- **Enhanced error handling** and comprehensive logging  
-- **Thermal monitoring** and throttling detection
-- **Stream health checks** every 5 minutes via cron
-- **Improved VLC parameters** optimized for long-term stability
-- **Signal handling** for clean process shutdowns
+- **Purpose-built media server** — MediaMTX's native `rpiCamera` source replaces
+  the leaky `cvlc` pipeline that dropped the stream after hours/days
+- **Automatic restart** on failure via systemd (`Restart=always`)
+- **RTSP over TCP** to avoid H.264 decode errors from UDP packet loss
+- **Memory limit** (200MB) with accounting
+- **Optional hardware watchdog** — auto-reboots on a hard hang (`setup-hardening.sh`)
+- **Optional log2ram** — reduces SD-card wear for 24/7 operation
 - **GPU memory optimization** with automatic checks
 
-## Network Configuration
+## Secure Remote Access (Tailscale)
 
-Ensure your Raspberry Pi is connected to your network and note its IP address:
-```bash
-hostname -I
+To reach the camera over the internet **securely**, RaspRec uses
+[Tailscale](https://tailscale.com) — a WireGuard-based mesh VPN.
+
+> ⚠️ **Do NOT port-forward the RTSP/WebRTC ports on the router.** RTSP has no
+> transport encryption, and an exposed camera port is found by internet scanners
+> (e.g. Shodan) within hours. Tailscale removes the need entirely: it opens **no
+> inbound router ports**, encrypts all traffic, and works behind CGNAT.
+
+### How it works
+
+```
+your phone ──WireGuard (Tailscale)──▶ Pi @ remote house
+  VLC app / browser                    MediaMTX  :8554 RTSP / :8889 WebRTC
+router: NO forwarded ports — camera invisible to the public internet
 ```
 
-For remote access, you may need to:
-1. Configure port forwarding on your router (port 8554)
-2. Set up dynamic DNS if using over the internet
-3. Consider VPN for secure remote access
+### Setup
+
+```bash
+./setup-tailscale.sh
+```
+
+This installs Tailscale, runs `tailscale up --ssh`, and prints a login URL. Sign
+in with the **same account** you'll use on your phone, then install the Tailscale
+app on your phone and sign in there too. The script prints your viewing URL, e.g.
+`rtsp://moms-camera:8554/cam`.
+
+### Recommended lockdown
+
+1. **ACLs** — restrict the tailnet so only *your* devices can reach the Pi:
+   <https://login.tailscale.com/admin/acls>
+2. **Disable key expiry** for the Pi so it never needs re-auth
+   (Machines → the Pi → Disable key expiry).
+3. **Tailscale SSH** (enabled by `--ssh`) lets you administer the Pi remotely
+   from any tailnet device — again, no open router ports.
+4. **MagicDNS** gives the Pi a stable name, so the viewing URL keeps working even
+   when the remote ISP changes the public IP.
+
+### Layers of protection
+
+| Layer | What it stops |
+|-------|---------------|
+| No port forwarding | Public internet can't see the camera at all |
+| Tailscale (WireGuard) | Encrypts traffic; only your tailnet can connect |
+| Tailscale ACLs | Restrict which tailnet devices reach the Pi |
+| MediaMTX auth | Password required even for a LAN/tailnet device |
+
+## Unattended Reliability Hardening
+
+For a Pi running 24/7 at a remote location (where you can't easily reboot it):
+
+```bash
+./setup-hardening.sh
+```
+
+- **Hardware watchdog** — auto-reboots the Pi if it hard-hangs.
+- **log2ram** — keeps logs in RAM to reduce SD-card wear (SD corruption is the
+  most common failure mode for always-on Raspberry Pis).
+
+Reboot afterwards to activate the watchdog: `sudo reboot`.
 
 ## Performance Notes
 
@@ -253,83 +329,41 @@ For remote access, you may need to:
 
 **Check if the service is running:**
 ```bash
-sudo systemctl status rtsp-camera
+sudo systemctl status mediamtx
 ```
 
 **If service is not running:**
 ```bash
-sudo systemctl start rtsp-camera
-sudo systemctl enable rtsp-camera
+sudo systemctl start mediamtx
+sudo systemctl enable mediamtx
 ```
 
 **Check service logs for errors:**
 ```bash
-sudo journalctl -u rtsp-camera -f
+sudo journalctl -u mediamtx -f
 ```
 
-#### Camera Stream Stops After Hours/Days (Runtime Stability Issues)
+**Authentication failing?** Confirm the username/password in
+`/usr/local/etc/mediamtx.yml` (`authInternalUsers`) match what your player sends.
 
-This is a common issue where the camera works initially but fails after extended operation.
+#### Camera Stream Stops After Hours/Days
 
-**Common causes and solutions:**
+With MediaMTX this should no longer happen — it was a symptom of the old `cvlc`
+memory leak. If a stream still drops:
 
-**Memory leaks in VLC:**
 ```bash
-# Add memory monitoring and restart to service
-sudo nano /etc/systemd/system/rtsp-camera.service
-# Add these lines under [Service]:
-# WatchdogSec=300
-# Restart=always
-# RestartSec=10
-```
+# Confirm the service restarted itself and inspect why it exited
+sudo journalctl -u mediamtx -n 100 --no-pager
 
-**GPU memory fragmentation:**
-```bash
-# Increase GPU memory split
-sudo raspi-config
-# Advanced Options → Memory Split → Set to 256MB
-sudo reboot
-```
-
-**Camera driver timeout issues:**
-```bash
-# Add camera timeout parameters to streaming script
-sudo nano /usr/local/bin/rtsp-camera.sh
-# Modify rpicam-vid command:
-rpicam-vid --timeout 0 --framerate 15 --width 720 --height 480 -n --flush --inline -o - | \
-cvlc stream:///dev/stdin --sout '#rtp{sdp=rtsp://:8554/stream1}' :demux=h264 --intf dummy --no-audio --no-video-title-show --no-stats
-```
-
-**Thermal throttling:**
-```bash
-# Check for throttling events
+# Check for thermal/voltage throttling (0x0 = OK)
 vcgencmd get_throttled
-# 0x0 = no throttling, other values indicate thermal/voltage issues
+
+# Ensure GPU memory is adequate for the ISP/encoder
+vcgencmd get_mem gpu   # want 128M+
 ```
 
-**Add automatic restart mechanism:**
-```bash
-# Edit the monitoring script
-sudo nano /usr/local/bin/camera-monitor.sh
-```
-
-**Create camera monitoring script:**
-```bash
-#!/bin/bash
-# Check if RTSP stream is responding
-timeout 10 ffprobe -v quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0 rtsp://localhost:8554/stream1 > /dev/null 2>&1
-if [ $? -ne 0 ]; then
-    echo "$(date): RTSP stream not responding, restarting service"
-    systemctl restart rtsp-camera
-fi
-```
-
-**Add to crontab for automatic monitoring:**
-```bash
-sudo crontab -e
-# Add this line to check every 5 minutes:
-*/5 * * * * /usr/local/bin/camera-monitor.sh >> /var/log/camera-monitor.log 2>&1
-```
+For an unattended Pi, run `./setup-hardening.sh` to add a hardware watchdog that
+reboots the Pi on a hard hang.
 
 #### Camera Not Detected (Initial Setup)
 
@@ -383,22 +417,19 @@ vcgencmd get_camera
 # Note: May show "supported=0 detected=0" even when camera works
 ```
 
-#### VLC/Streaming Issues
+#### MediaMTX/Streaming Issues
 
-**Install/reinstall VLC:**
+**Reinstall MediaMTX:** re-run `./run.sh` (it re-downloads the binary and rewrites config).
+
+**Test MediaMTX manually (see live errors):**
 ```bash
-sudo apt update
-sudo apt install --reinstall vlc-bin vlc-plugin-base
+sudo systemctl stop mediamtx
+sudo -u <streaming-user> /usr/local/bin/mediamtx /usr/local/etc/mediamtx.yml
 ```
 
-**Test VLC manually:**
+**Check if ports 8554/8889 are in use:**
 ```bash
-cvlc --version
-```
-
-**Check if port 8554 is in use:**
-```bash
-sudo netstat -tlnp | grep 8554
+sudo ss -tlnp | grep -E '8554|8889'
 ```
 
 #### Memory/Performance Issues
@@ -409,10 +440,11 @@ htop
 free -h
 ```
 
-**Reduce video quality in rtsp-camera.sh:**
+**Reduce video quality in the MediaMTX config:**
 ```bash
-# Lower resolution and framerate
-rpicam-vid --framerate 10 --width 640 --height 480 -n -t 0 --inline -o -
+sudo nano /usr/local/etc/mediamtx.yml
+# Lower rpiCameraWidth/rpiCameraHeight/rpiCameraFPS/rpiCameraBitrate, then:
+sudo systemctl restart mediamtx
 ```
 
 **Increase GPU memory split:**
@@ -497,38 +529,37 @@ sudo passwd USERNAME
 
 **Or modify service to use existing user:**
 ```bash
-sudo nano /etc/systemd/system/rtsp-camera.service
-# Change User=USERNAME to your preferred user
-# Update file paths accordingly
-sudo systemctl daemon-reload
+sudo nano /etc/systemd/system/mediamtx.service
+# Change User=USERNAME to your preferred user (must be in the video group)
+sudo systemctl daemon-reload && sudo systemctl restart mediamtx
 ```
 
 #### Resolution/Configuration Mismatch
 
-**Fix resolution inconsistency:**
-Edit the camera script to match desired resolution:
+**Fix resolution:**
 ```bash
-sudo nano /usr/local/bin/rtsp-camera.sh
-# Ensure resolution matches your needs (720x480 or 720x720)
+sudo nano /usr/local/etc/mediamtx.yml
+# Adjust rpiCameraWidth / rpiCameraHeight, then:
+sudo systemctl restart mediamtx
 ```
 
-#### Script Path Issues
+#### Binary/Config Path Issues
 
-**Verify script location and permissions:**
+**Verify MediaMTX binary and config:**
 ```bash
-ls -la /usr/local/bin/rtsp-camera.sh
-sudo chmod +x /usr/local/bin/rtsp-camera.sh
+ls -la /usr/local/bin/mediamtx /usr/local/etc/mediamtx.yml
+/usr/local/bin/mediamtx --version
 ```
 
 ### Network Diagnostics
 
 #### Test RTSP Stream Locally
 
-**From the Pi itself:**
+**From the Pi itself (uses the stream credentials):**
 ```bash
-ffplay rtsp://localhost:8554/stream1
+ffplay "rtsp://USER:PASS@localhost:8554/cam"
 # Or
-vlc rtsp://localhost:8554/stream1
+vlc "rtsp://USER:PASS@localhost:8554/cam"
 ```
 
 #### Test from Another Device
@@ -545,7 +576,7 @@ telnet [PI_IP] 8554
 
 **Use VLC or ffplay:**
 ```bash
-ffplay rtsp://[PI_IP]:8554/stream1
+ffplay "rtsp://USER:PASS@[PI_IP]:8554/cam"
 ```
 
 ### Advanced Diagnostics
@@ -577,29 +608,29 @@ sudo journalctl -xe
 
 **Service-specific logs:**
 ```bash
-sudo journalctl -u rtsp-camera --since "1 hour ago"
+sudo journalctl -u mediamtx --since "1 hour ago"
 ```
 
 ### Quick Fixes Checklist
 
-1. ✅ Camera enabled in raspi-config
-2. ✅ SSH enabled and running
+1. ✅ Camera detected (`rpicam-still --list-cameras`)
+2. ✅ MediaMTX service running (`systemctl status mediamtx`)
 3. ✅ Network connectivity working
-4. ✅ VLC installed and working
-5. ✅ Service running without errors
-6. ✅ Port 8554 not blocked by firewall
+4. ✅ Stream credentials correct in `mediamtx.yml`
+5. ✅ Tailscale up (`tailscale status`) for remote access
+6. ✅ Ports 8554/8889 NOT forwarded on the router
 7. ✅ Sufficient power supply (2.5A+)
 8. ✅ SD card not corrupted
-9. ✅ User permissions correct
-10. ✅ Script paths and permissions correct
+9. ✅ Streaming user in the `video` group
+10. ✅ GPU memory 128M+
 
 ### Getting Help
 
 If issues persist:
-1. Check the service logs: `sudo journalctl -u rtsp-camera -f`
-2. Test components individually (camera, VLC, network)
-3. Verify hardware connections
-4. Consider using a different RTSP streaming solution if VLC continues to have issues
+1. Run `./diagnose.sh` for a full status report
+2. Check the service logs: `sudo journalctl -u mediamtx -f`
+3. Test components individually (camera, MediaMTX, Tailscale, network)
+4. Verify hardware connections and power supply
 
 ## License
 

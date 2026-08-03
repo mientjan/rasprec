@@ -200,7 +200,9 @@ if command -v tailscale &>/dev/null; then
         print_status 1 "Tailscale installed but not connected (run: sudo tailscale up --ssh)"
     fi
 else
-    print_warning "Tailscale not installed — run ./setup-tailscale.sh for secure remote access"
+    print_warning "LAN-only mode — Tailscale not installed (optional)"
+    echo "   The stream works on the local network. To view it from outside"
+    echo "   the house, run ./setup-tailscale.sh"
 fi
 
 echo ""

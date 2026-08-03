@@ -90,7 +90,8 @@ The setup script will:
 - Prompt for a streaming user and a stream viewing password
 - Write the MediaMTX config to `/usr/local/etc/mediamtx.yml`
 - Install the `mediamtx` systemd service (auto-restart on failure)
-- Offer to set up **Tailscale** for secure remote access (recommended)
+- Ask whether you want **remote access via Tailscale** (optional — skip it for a
+  LAN-only camera; see [Access Modes](#access-modes))
 - Offer to apply **reliability hardening** (watchdog + log2ram)
 - Start the stream automatically
 
@@ -250,6 +251,33 @@ After running the setup:
 - **Optional hardware watchdog** — auto-reboots on a hard hang (`setup-hardening.sh`)
 - **Optional log2ram** — reduces SD-card wear for 24/7 operation
 - **GPU memory optimization** with automatic checks
+
+## Access Modes
+
+RaspRec works in two modes. `run.sh` asks which one you want; Tailscale is
+**optional**.
+
+| Mode | Setup | View the camera from |
+|------|-------|----------------------|
+| **LAN only** | answer `n` to the Tailscale prompt | devices on the same local network |
+| **Remote** (recommended for a camera at another house) | answer `Y`, or run `./setup-tailscale.sh` later | anywhere, over the Tailscale VPN |
+
+LAN-only is a complete, working setup — MediaMTX, the stream password, and the
+systemd service are all installed either way. Tailscale only adds the ability to
+reach the camera from **outside** the house, and can be added at any time:
+
+```bash
+./setup-tailscale.sh
+```
+
+For unattended installs, skip the prompts with environment variables:
+
+```bash
+INSTALL_TAILSCALE=no INSTALL_HARDENING=yes ./run.sh
+```
+
+> ⚠️ In **either** mode, never forward ports 8554/8889 on the router. If you need
+> access from outside the house, use Tailscale — not port forwarding.
 
 ## Secure Remote Access (Tailscale)
 

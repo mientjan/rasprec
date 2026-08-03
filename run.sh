@@ -243,25 +243,54 @@ fi
 echo "✓ MediaMTX service running"
 
 # ---------------------------------------------------------------------------
-# 10. Secure remote access via Tailscale
+# 10. Remote access mode — Tailscale (optional)
+#
+# The stream works on the local network without Tailscale. Tailscale is only
+# needed to reach the camera from OUTSIDE the house. Set INSTALL_TAILSCALE=yes
+# or =no beforehand to skip this prompt (useful for unattended installs).
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Secure remote access (Tailscale) ==="
-echo "Recommended: reach the camera from your phone with NO open router ports."
-read -p "Set up Tailscale now? (Y/n): " -n 1 -r; echo
-if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+echo "=== Remote access ==="
+echo "The stream already works on the local network."
+echo "Tailscale is only needed to view the camera from outside the house."
+echo ""
+echo "  yes - install Tailscale (view from anywhere, no open router ports)"
+echo "  no  - LAN only (view from devices on this same network)"
+echo ""
+
+if [ -n "$INSTALL_TAILSCALE" ]; then
+    echo "INSTALL_TAILSCALE=$INSTALL_TAILSCALE (from environment)"
+    TS_CHOICE="$INSTALL_TAILSCALE"
+else
+    read -p "Install Tailscale for remote access? (Y/n): " -n 1 -r; echo
+    if [[ $REPLY =~ ^[Nn]$ ]]; then TS_CHOICE="no"; else TS_CHOICE="yes"; fi
+fi
+
+TAILSCALE_ENABLED=false
+if [[ "$TS_CHOICE" =~ ^([Yy]|yes|YES|true|1)$ ]]; then
     chmod +x setup-tailscale.sh
     ./setup-tailscale.sh
+    TAILSCALE_ENABLED=true
 else
-    echo "Skipped. Run ./setup-tailscale.sh later to enable secure remote access."
+    echo ""
+    echo "Skipped — running in LAN-only mode."
+    echo "The camera is reachable only from devices on this local network."
+    echo "Run ./setup-tailscale.sh any time later to add remote access."
 fi
 
 # ---------------------------------------------------------------------------
 # 11. Optional hardening (watchdog + SD-card wear reduction)
 # ---------------------------------------------------------------------------
 echo ""
-read -p "Apply reliability hardening (hardware watchdog + log2ram)? (Y/n): " -n 1 -r; echo
-if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+if [ -n "$INSTALL_HARDENING" ]; then
+    echo "INSTALL_HARDENING=$INSTALL_HARDENING (from environment)"
+    HARDEN_CHOICE="$INSTALL_HARDENING"
+else
+    read -p "Apply reliability hardening (hardware watchdog + log2ram)? (Y/n): " -n 1 -r; echo
+    if [[ $REPLY =~ ^[Nn]$ ]]; then HARDEN_CHOICE="no"; else HARDEN_CHOICE="yes"; fi
+fi
+
+if [[ "$HARDEN_CHOICE" =~ ^([Yy]|yes|YES|true|1)$ ]]; then
     chmod +x setup-hardening.sh
     ./setup-hardening.sh
 else
@@ -273,19 +302,30 @@ fi
 # ---------------------------------------------------------------------------
 LAN_IP=$(hostname -I | awk '{print $1}')
 echo ""
-echo "=== Setup Complete ==="
+if [ "$TAILSCALE_ENABLED" = true ]; then
+    echo "=== Setup Complete (remote access enabled) ==="
+else
+    echo "=== Setup Complete (LAN-only mode) ==="
+fi
 echo "Stream path: /cam   (user: ${STREAM_USER})"
 echo ""
-echo "On the LAN you can test now:"
+echo "On the local network:"
 echo "  RTSP:   rtsp://${STREAM_USER}:<password>@${LAN_IP}:8554/cam"
 echo "  WebRTC: http://${LAN_IP}:8889/cam"
 echo ""
-echo "From your phone anywhere (over Tailscale) — see the URL printed by"
-echo "setup-tailscale.sh, e.g. rtsp://<tailscale-name>:8554/cam"
+if [ "$TAILSCALE_ENABLED" = true ]; then
+    echo "From anywhere (over Tailscale) — see the URL printed by"
+    echo "setup-tailscale.sh, e.g. rtsp://<tailscale-name>:8554/cam"
+else
+    echo "Remote access is NOT enabled. The camera works only on this network."
+    echo "To view it from outside the house later, run: ./setup-tailscale.sh"
+fi
 echo ""
 echo "Manage:  sudo systemctl status mediamtx"
 echo "Logs:    sudo journalctl -u mediamtx -f"
 echo "Diag:    ./diagnose.sh"
 echo ""
-echo "SECURITY: never forward ports 8554/8889 on the router. Tailscale makes it"
-echo "unnecessary and keeps the camera invisible to the public internet."
+echo "SECURITY WARNING: do not forward ports 8554/8889 on the router, and do not"
+echo "expose them to the internet. RTSP has no transport encryption, and an"
+echo "exposed camera port is found by internet scanners within hours."
+echo "To view the camera from outside the house, use Tailscale (./setup-tailscale.sh)."

@@ -18,6 +18,8 @@ hours or days.
 - **Automatic startup + self-restart** using systemd (`Restart=always`)
 - **Low resource usage** — MediaMTX is a single zero-dependency binary
 - **Optional hardening**: hardware watchdog + log2ram for unattended 24/7 use
+- **Optional recording** — a Dockerized NVR for a separate machine: 24/7
+  recording, motion clips, retention and a browsing UI ([docs/nvr.md](docs/nvr.md))
 
 > **Security:** never forward ports 8554/8889 on your router. Tailscale makes it
 > unnecessary and keeps the camera private. See
@@ -225,6 +227,14 @@ rasprec/
 ├── setup-hardening.sh           # Watchdog + log2ram for unattended use
 ├── setup-gpu-memory.sh          # GPU memory configuration helper
 ├── diagnose.sh                  # System diagnostic tool
+├── docker/                      # NVR: recording stack (runs on a separate box)
+│   ├── compose.yml              # mediamtx + nvr containers
+│   ├── Dockerfile               # multi-arch amd64/arm64 image
+│   ├── config/cameras.example.yml
+│   ├── nvr/                     # config render, motion detection, clips, web UI
+│   └── tests/                   # run anywhere: no Pi, no Docker, no cameras
+├── scripts/nvr-up.sh            # NVR setup + start wrapper
+├── docs/nvr.md                  # NVR documentation
 ├── package.json                 # Project metadata
 ├── rtsp-camera.sh               # DEPRECATED (old cvlc streamer)
 ├── rtsp-camera.service          # DEPRECATED (old cvlc service)
@@ -327,6 +337,28 @@ app on your phone and sign in there too. The script prints your viewing URL, e.g
 | Tailscale (WireGuard) | Encrypts traffic; only your tailnet can connect |
 | Tailscale ACLs | Restrict which tailnet devices reach the Pi |
 | MediaMTX auth | Password required even for a LAN/tailnet device |
+
+## Recording (NVR)
+
+The Pi streams live only — it never writes video to disk. To keep footage, run
+the Dockerized NVR on a **separate always-on machine** (an x86 box, or a Pi 4/5
+with a USB SSD):
+
+```bash
+./scripts/nvr-up.sh     # first run creates the config templates and stops
+# edit docker/.env and docker/config/cameras.yml, then:
+./scripts/nvr-up.sh
+```
+
+It gives you 24/7 continuous recording, motion-triggered clips, automatic
+retention purging, and one password-protected page at `http://localhost:8080`
+for live view, event browsing and archive scrubbing. It handles rasprec Pis and
+off-the-shelf RTSP cameras (Reolink, Hikvision, …) side by side.
+
+**No changes are needed on the camera Pi** — the `view` user `run.sh` creates
+already has the `read` permission the recorder uses.
+
+Full setup, tuning and disk-sizing guide: **[docs/nvr.md](docs/nvr.md)**.
 
 ## Unattended Reliability Hardening
 

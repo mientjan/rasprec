@@ -130,3 +130,11 @@ dist
 .pnp.*
 
 .idea
+# NVR (docker/) — secrets, user config and recorded media
+docker/.env
+docker/config/cameras.yml
+docker/data/
+data/
+.pytest_cache/
+__pycache__/
+*.pyc

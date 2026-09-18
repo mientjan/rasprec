@@ -1,0 +1,44 @@
+# Requires Docker Compose >=2.24.4. Use only through infra/aws/start.sh.
+services:
+  nvr-config:
+    volumes: !override
+      - /etc/rasprec/config:/config:ro
+      - mtxconfig:/mtxconfig
+      - type: bind
+        source: /srv/rasprec/recordings
+        target: /recordings
+        bind: {create_host_path: false}
+  mediamtx:
+    volumes: !override
+      - mtxconfig:/mtxconfig:ro
+      - type: bind
+        source: /srv/rasprec/recordings
+        target: /recordings
+        bind: {create_host_path: false}
+  nvr:
+    ports: !reset []
+    environment:
+      NVR_AUTH_MODE: session
+    volumes: !override
+      - /etc/rasprec/config:/config:ro
+      - type: bind
+        source: /srv/rasprec
+        target: /data
+        bind: {create_host_path: false}
+  caddy:
+    image: caddy:2.11.2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      NVR_DOMAIN: ${NVR_DOMAIN:?Set NVR_DOMAIN}
+    volumes:
+      - ./infra/aws/Caddyfile:/etc/caddy/Caddyfile:ro
+      - type: bind
+        source: /srv/rasprec/caddy
+        target: /data
+        bind: {create_host_path: false}
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    depends_on: [nvr]

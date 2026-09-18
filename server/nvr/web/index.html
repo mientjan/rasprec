@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rasprec NVR</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>rasprec <span>NVR</span></h1>
+  <nav>
+    <button data-view="live" class="active">Live</button>
+    <button data-view="events">Events</button>
+    <button data-view="archive">Archive</button>
+  </nav>
+  <div id="status"></div><button id="logout" hidden>Sign out</button>
+  <p id="notice" role="status"></p>
+</header>
+
+<main>
+  <section id="live" class="view active">
+    <div id="live-grid" class="grid"></div>
+  </section>
+
+  <section id="events" class="view">
+    <div class="filters">
+      <select id="ev-camera"><option value="">All cameras</option></select>
+      <input type="date" id="ev-date">
+      <select id="ev-source"><option value="">All sources</option><option value="motion">Motion</option><option value="manual">Manual</option></select>
+      <select id="ev-kind"><option value="">Photos and videos</option><option value="photo">Photos</option><option value="clip">Videos</option></select>
+      <button id="ev-clear" class="ghost">Clear</button>
+      <button id="ev-reload" class="ghost">Reload</button>
+    </div>
+    <div id="ev-grid" class="grid"></div>
+    <button id="ev-more" class="ghost wide" hidden>Load more</button>
+    <p id="ev-empty" class="empty" hidden>No recordings for this filter.</p>
+  </section>
+
+  <section id="archive" class="view">
+    <div class="filters">
+      <select id="ar-camera"></select>
+      <button id="ar-reload" class="ghost">Reload segments</button>
+    </div>
+    <div class="split">
+      <ul id="ar-list"></ul>
+      <div class="player">
+        <video id="ar-video" controls preload="metadata"></video>
+        <p id="ar-label" class="muted">Pick a segment to play.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="modal" hidden>
+  <div class="modal-inner">
+    <button id="modal-close" class="ghost">Close</button>
+    <video id="modal-video" controls autoplay></video>
+    <img id="modal-image" hidden alt="Saved camera image">
+    <a id="modal-download" download>Download</a>
+    <a id="modal-photo" hidden target="_blank" rel="noopener">View full-size photo</a>
+    <p id="modal-label" class="muted"></p>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

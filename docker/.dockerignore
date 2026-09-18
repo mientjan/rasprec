@@ -1,9 +1,0 @@
-.env
-config/cameras.yml
-data/
-tests/
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-pytest.ini

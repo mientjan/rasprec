@@ -1,117 +1,30 @@
 #!/bin/bash
-
-# RaspRec Quick Install Script
-# Run this script on your Raspberry Pi to automatically clone and setup RTSP camera streaming
-
-set -e  # Exit on any error
-
-echo "=== RaspRec Quick Install ==="
-echo "This script will clone and setup RTSP camera streaming on your Raspberry Pi"
-echo ""
-
-# Check if we're running on Raspberry Pi
-if ! command -v vcgencmd &> /dev/null; then
-    echo "WARNING: This doesn't appear to be a Raspberry Pi system"
-    echo "vcgencmd command not found"
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-fi
-
-# Check if git is installed
-if ! command -v git &> /dev/null; then
-    echo "Installing git..."
-    sudo apt-get update
-    sudo apt-get install -y git
-fi
-
-# Set repository URL (update this with your actual repository URL)
+# Public, standalone Pi installer. Server software is never installed here.
+set -euo pipefail
 REPO_URL="https://github.com/mientjan/rasprec.git"
 INSTALL_DIR="$HOME/rasprec"
-
-# Check if directory already exists
-if [ -d "$INSTALL_DIR" ]; then
-    echo "🔄 Existing RaspRec installation found at $INSTALL_DIR"
-    echo "Updating repository..."
-    
-    cd "$INSTALL_DIR"
-    
-    # Check if it's a git repository
-    if [ -d ".git" ]; then
-        # Stash any local changes
-        if ! git diff --quiet || ! git diff --cached --quiet; then
-            echo "Stashing local changes..."
-            git stash push -m "Auto-stash before update $(date)"
-        fi
-        
-        # Pull latest changes
-        echo "Pulling latest changes from repository..."
-        git fetch origin
-        git reset --hard origin/main
-        
-        echo "✓ Repository updated successfully"
-    else
-        echo "WARNING: Directory exists but is not a git repository"
-        echo "Backing up existing directory and cloning fresh..."
-        mv "$INSTALL_DIR" "${INSTALL_DIR}.backup.$(date +%Y%m%d_%H%M%S)"
-        git clone "$REPO_URL" "$INSTALL_DIR"
-        cd "$INSTALL_DIR"
+command -v git >/dev/null || { echo "Install git first: sudo apt install git" >&2; exit 1; }
+if [ -e "$INSTALL_DIR" ]; then
+    [ -e "$INSTALL_DIR/.git" ] && git -C "$INSTALL_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
+        { echo "$INSTALL_DIR is not a Git checkout; move it aside yourself." >&2; exit 1; }
+    if [ -n "$(git -C "$INSTALL_DIR" status --porcelain --untracked-files=all)" ]; then
+        echo "Checkout has local changes. Back them up and reconcile before updating." >&2
+        exit 1
     fi
+    git -C "$INSTALL_DIR" fetch origin main
+    # Refuse even an ahead-only local branch: never run unexpected local commits.
+    git -C "$INSTALL_DIR" merge-base --is-ancestor HEAD FETCH_HEAD ||
+        { echo "Local history diverges from main; reconcile it before updating." >&2; exit 1; }
+    git -C "$INSTALL_DIR" merge --ff-only FETCH_HEAD
 else
-    echo "🆕 Fresh installation - cloning repository..."
-    git clone "$REPO_URL" "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
+    (git sparse-checkout -h 2>&1 || true) | grep -q 'sparse-checkout' ||
+        { echo "Upgrade Git to a version supporting sparse checkout and partial clone." >&2; exit 1; }
+    git clone --filter=blob:none --sparse "$REPO_URL" "$INSTALL_DIR"
+    git -C "$INSTALL_DIR" sparse-checkout set --cone device
 fi
-
-# Make the setup script executable
-chmod +x run.sh
-
-echo ""
-if [ -d "$INSTALL_DIR/.git" ] && git log --oneline -1 &>/dev/null; then
-    echo "=== Repository updated successfully! ==="
-    echo "Latest commit: $(git log --oneline -1)"
-else
-    echo "=== Repository setup completed! ==="
-fi
-echo "Location: $INSTALL_DIR"
-echo ""
-
-# Check if this is an update or fresh install for messaging
-if systemctl is-active --quiet mediamtx 2>/dev/null || systemctl is-active --quiet rtsp-camera 2>/dev/null; then
-    echo "🔄 Existing camera service detected - this appears to be an update"
-    echo "The setup script will:"
-    echo "- Install/update MediaMTX and rewrite its config"
-    echo "- Backup existing configurations"
-    echo "- Migrate off the old cvlc service if present"
-    echo "- Restart the stream with the new setup"
-else
-    echo "🆕 Fresh installation detected"
-    echo "The setup script will:"
-    echo "- Install MediaMTX + ffmpeg"
-    echo "- Configure secure RTSP/WebRTC streaming with a viewing password"
-    echo "- Offer Tailscale for secure remote access (no open router ports)"
-    echo "- Offer reliability hardening (watchdog + log2ram)"
-    echo "- Create necessary users and permissions"
-    echo "- Start the camera stream automatically"
-fi
-echo ""
-
-# Ask if user wants to run setup immediately
-read -p "Would you like to run the setup/update now? (Y/n): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Nn]$ ]]; then
-    echo ""
-    echo "Setup skipped. Run the following commands when ready:"
-    echo "  cd $INSTALL_DIR"
-    echo "  ./run.sh"
-else
-    echo ""
-    echo "Starting setup/update..."
-    echo "========================================"
-    ./run.sh
-fi
-
-echo ""
-echo "Installation script completed!"
+echo "Device source is ready in $INSTALL_DIR/device (server dependencies are not installed)."
+read -r -p "Run camera setup now? (Y/n): " REPLY
+case "$REPLY" in
+    n|N) echo "Later: bash \"$INSTALL_DIR/run.sh\"" ;;
+    *) exec bash "$INSTALL_DIR/run.sh" ;;
+esac

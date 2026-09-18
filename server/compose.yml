@@ -1,0 +1,71 @@
+name: rasprec-nvr
+
+# Only the nvr service publishes a port, and it binds to loopback. Reach it
+# remotely over Tailscale on this host -- never forward these ports on a router.
+
+x-nvr-image: &nvr-image
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: rasprec-nvr:latest
+
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # One-shot: turns cameras.yml into mediamtx.yml, then exits.
+  nvr-config:
+    <<: *nvr-image
+    command: ["-m", "nvr.render_config"]
+    env_file: ["${NVR_ENV_FILE:-.env}"]
+    volumes:
+      - ./config:/config:ro
+      - mtxconfig:/mtxconfig
+      - ${DATA_DIR:-./data}/recordings:/recordings
+    restart: "no"
+    mem_limit: ${CONFIG_MEMORY_LIMIT:-256m}
+    cpus: ${CONFIG_CPUS:-1.0}
+    logging: *bounded-logging
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.19.3
+    mem_limit: ${MTX_MEMORY_LIMIT:-1g}
+    cpus: ${MTX_CPUS:-2.0}
+    logging: *bounded-logging
+    command: ["/mtxconfig/mediamtx.yml"]
+    volumes:
+      - mtxconfig:/mtxconfig:ro
+      - ${DATA_DIR:-./data}/recordings:/recordings
+    restart: unless-stopped
+    depends_on:
+      nvr-config:
+        condition: service_completed_successfully
+
+  nvr:
+    <<: *nvr-image
+    mem_limit: ${NVR_MEMORY_LIMIT:-1g}
+    cpus: ${NVR_CPUS:-2.0}
+    logging: *bounded-logging
+    env_file: ["${NVR_ENV_FILE:-.env}"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 3).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    environment:
+      MEDIAMTX_HOST: mediamtx
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    volumes:
+      - ./config:/config:ro
+      - ${DATA_DIR:-./data}:/data
+    restart: unless-stopped
+    depends_on:
+      - mediamtx
+
+volumes:
+  mtxconfig:

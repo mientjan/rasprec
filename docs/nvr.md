@@ -5,7 +5,7 @@ continuously, cuts a clip whenever something moves, throws old footage away on
 a schedule, and gives you one password-protected page to browse it all.
 
 It runs in Docker on a **separate machine** — an always-on x86 box or a Pi 4/5
-with a USB SSD. It does not run on the camera Pi: that Pi has a 200 MB memory
+with a USB SSD. It does not run on the camera Pi: that Pi has a separate, constrained streaming memory
 budget and an SD card you do not want to write video to.
 
 Nothing on the camera Pi changes. The `view` user `run.sh` already creates has
@@ -183,3 +183,45 @@ Building for both architectures:
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 docker/
 ```
+
+## Resource budgets and failure recovery
+
+Defaults target a small installation on an SSD-backed Pi 4/5 or x86 host, not an
+arbitrary number of cameras. Both `nvr` and `mediamtx` have a 1 GB RAM ceiling and
+two-CPU limit; `nvr-config` has 256 MB and one CPU. These limits are not memory
+reservations. Leave host RAM for Linux, filesystem cache and other services.
+Tune `NVR_MEMORY_LIMIT`, `NVR_CPUS`, `MTX_MEMORY_LIMIT`, `MTX_CPUS`,
+`CONFIG_MEMORY_LIMIT` and `CONFIG_CPUS` in `.env` for the actual camera count,
+resolution and codec. Container logs rotate at 10 MB × three files per service.
+
+Clip extraction uses `NVR_CLIP_WORKERS=2` workers and a bounded
+`NVR_CLIP_QUEUE_SIZE=32` pending-job queue. Both settings must be positive
+integers. If overloaded, the event remains visible without a clip and a warning
+is logged; continuous recording is unaffected. Jobs queued or active during
+shutdown are cancelled rather than retried at next startup; their event metadata
+and continuous recordings remain. Cameras with `record: false` retain motion
+metadata but do not attempt archive-based clips.
+
+`motion.max_duration` defaults to `5m` (positive, at most `1h`) and splits
+sustained motion into consecutive events. Pre/post-roll may overlap between
+clips. Retention must be positive and finite; the segment duration must be at
+least one second and no longer than continuous retention. Explicit camera names
+must not collide with generated `<camera>_sub` paths.
+
+A motion reader that produces no frame for 15 seconds is killed and reconnected.
+FFmpeg decoder threads are bounded. Thumbnails seek before decoding and time out
+after 30 seconds; an entire capture job has a five-minute deadline including
+post-roll wait and download. Failed or cancelled jobs clean partial files and
+reap subprocesses. Very slow storage or extreme post-roll settings may therefore
+leave an event without a clip. Existing database and recording formats do not
+change.
+
+Measure `docker stats` and inspect logs under realistic multi-camera load before
+raising limits. Increasing clip workers also increases simultaneous decoding,
+connections and disk activity. Run the regression suite described in README;
+real camera/SSD performance still needs an integration and soak test.
+
+Camera URL `${VAR}` substitutions remain literal. Percent-encode special
+characters in the username/password portions of RTSP URLs (for example `#` as
+`%23`, space as `%20`, `/` as `%2F`). Do not URL-encode the entire URL, and do not
+use the stored MediaMTX hash as the login password.

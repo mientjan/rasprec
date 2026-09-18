@@ -9,6 +9,12 @@ x-nvr-image: &nvr-image
     dockerfile: Dockerfile
   image: rasprec-nvr:latest
 
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # One-shot: turns cameras.yml into mediamtx.yml, then exits.
   nvr-config:
@@ -20,9 +26,15 @@ services:
       - mtxconfig:/mtxconfig
       - ${DATA_DIR:-./data}/recordings:/recordings
     restart: "no"
+    mem_limit: ${CONFIG_MEMORY_LIMIT:-256m}
+    cpus: ${CONFIG_CPUS:-1.0}
+    logging: *bounded-logging
 
   mediamtx:
     image: bluenviron/mediamtx:1.19.3
+    mem_limit: ${MTX_MEMORY_LIMIT:-1g}
+    cpus: ${MTX_CPUS:-2.0}
+    logging: *bounded-logging
     command: ["/mtxconfig/mediamtx.yml"]
     volumes:
       - mtxconfig:/mtxconfig:ro
@@ -34,6 +46,9 @@ services:
 
   nvr:
     <<: *nvr-image
+    mem_limit: ${NVR_MEMORY_LIMIT:-1g}
+    cpus: ${NVR_CPUS:-2.0}
+    logging: *bounded-logging
     env_file: [.env]
     environment:
       MEDIAMTX_HOST: mediamtx

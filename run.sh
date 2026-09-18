@@ -7,7 +7,29 @@
 # This replaces the old cvlc pipeline, which leaked memory and dropped the
 # stream after hours/days.
 
-set -e
+set -eo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+# Preflight is read-only and happens before apt, user or service changes.
+command -v python3 >/dev/null || { echo "Python 3 is required (install python3 first)."; exit 1; }
+PREFLIGHT=$(python3 scripts/camera_setup.py preflight)
+MTX_ARCH=$(printf '%s\n' "$PREFLIGHT" | sed -n '1p')
+MEMORY_MAX=$(printf '%s\n' "$PREFLIGHT" | sed -n '2p')
+CAMERA_ROOT=""
+source scripts/camera-transaction.sh
+umask 077
+TMP_DIR=$(mktemp -d)
+TRANSACTION=false
+cleanup() {
+    status=$?
+    trap - EXIT
+    if [ "$TRANSACTION" = true ]; then camera_rollback; fi
+    rm -rf "$TMP_DIR"
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "=== RaspRec Setup ==="
 echo "Secure RTSP/WebRTC camera streaming for Raspberry Pi (MediaMTX + Tailscale)"
@@ -25,27 +47,16 @@ echo ""
 # ---------------------------------------------------------------------------
 # 1. Detect Raspberry Pi model + performance tier
 # ---------------------------------------------------------------------------
-if ! command -v vcgencmd &> /dev/null; then
-    echo "WARNING: This doesn't appear to be a Raspberry Pi system (no vcgencmd)"
-    PI_MODEL="unknown"
-    PI_PERFORMANCE="medium"
-else
-    PI_MODEL=$(cat /proc/device-tree/model 2>/dev/null | tr -d '\0' | grep -o "Raspberry Pi [0-9A-Za-z ]*" | head -1)
-    [ -z "$PI_MODEL" ] && PI_MODEL="Raspberry Pi (unknown model)"
-    echo "✓ Detected: $PI_MODEL"
-
-    if echo "$PI_MODEL" | grep -qi "Pi 4\|Pi 5"; then
-        PI_PERFORMANCE="maximum"; echo "  Optimizing for Pi 4/5 (maximum performance)"
-    elif echo "$PI_MODEL" | grep -qi "Pi 3"; then
-        PI_PERFORMANCE="high"; echo "  Optimizing for Pi 3 (high performance)"
-    elif echo "$PI_MODEL" | grep -qi "Pi Zero 2"; then
-        PI_PERFORMANCE="medium"; echo "  Optimizing for Pi Zero 2 W (balanced)"
-    elif echo "$PI_MODEL" | grep -qi "Pi Zero"; then
-        PI_PERFORMANCE="low"; echo "  Optimizing for Pi Zero (limited)"
-    else
-        PI_PERFORMANCE="medium"; echo "  Using default (medium) performance settings"
-    fi
-fi
+PI_MODEL=$(tr -d '\0' < /proc/device-tree/model)
+echo "Detected: $PI_MODEL"
+case "$PI_MODEL" in
+    *"Pi 5"*) PI_PERFORMANCE=software ;;
+    *"Pi 4"*) PI_PERFORMANCE=maximum ;;
+    *"Pi 3"*) PI_PERFORMANCE=high ;;
+    *"Pi Zero 2"*) PI_PERFORMANCE=medium ;;
+    *"Pi Zero"*) PI_PERFORMANCE=low ;;
+    *) PI_PERFORMANCE=medium ;;
+esac
 
 # ---------------------------------------------------------------------------
 # 2. Check camera availability + detect model
@@ -57,9 +68,9 @@ command -v rpicam-still &> /dev/null && CAM_TOOL="rpicam-still"
 [ -z "$CAM_TOOL" ] && command -v libcamera-still &> /dev/null && CAM_TOOL="libcamera-still"
 
 if [ -n "$CAM_TOOL" ]; then
-    if $CAM_TOOL --list-cameras 2>/dev/null | grep -q "Available cameras"; then
+    CAMERA_INFO=$($CAM_TOOL --list-cameras 2>/dev/null || true)
+    if grep -q "Available cameras" <<< "$CAMERA_INFO"; then
         echo "✓ Camera detected via $CAM_TOOL"
-        CAMERA_INFO=$($CAM_TOOL --list-cameras 2>/dev/null)
         if echo "$CAMERA_INFO" | grep -qi "imx219"; then CAMERA_TYPE="v2"; echo "  Camera v2 (IMX219)"
         elif echo "$CAMERA_INFO" | grep -qi "ov5647"; then CAMERA_TYPE="v1"; echo "  Camera v1 (OV5647)"
         elif echo "$CAMERA_INFO" | grep -qi "imx477"; then CAMERA_TYPE="hq"; echo "  HQ Camera (IMX477)"
@@ -77,21 +88,8 @@ else
     [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# 3. Check GPU memory (native rpiCamera still needs GPU for the ISP/encoder)
-# ---------------------------------------------------------------------------
-if command -v vcgencmd &> /dev/null; then
-    GPU_MEM=$(vcgencmd get_mem gpu | cut -d'=' -f2 | cut -d'M' -f1)
-    if [ "$GPU_MEM" -lt 128 ]; then
-        echo "WARNING: GPU memory is ${GPU_MEM}M (recommend 128M+)."
-        read -p "Run GPU memory setup script now? (y/N): " -n 1 -r; echo
-        if [[ $REPLY =~ ^[Yy]$ ]] && [ -f "setup-gpu-memory.sh" ]; then
-            chmod +x setup-gpu-memory.sh && ./setup-gpu-memory.sh
-        fi
-    else
-        echo "✓ GPU memory: ${GPU_MEM}M"
-    fi
-fi
+# libcamera uses CMA, not the legacy gpu_mem split. Leave boot memory unchanged.
+echo "Service memory limit: ${MEMORY_MAX} MB (override: CAMERA_MEMORY_MAX_MB)"
 
 # ---------------------------------------------------------------------------
 # 4. Choose streaming user
@@ -102,15 +100,16 @@ if [ -z "$CAMERA_USER" ]; then
     echo "Camera streaming requires a user account (must be in the 'video' group)."
     echo "1. Use current user ($ACTUAL_USER)"
     echo "2. Create dedicated camera user"
-    read -p "Choose (1/2) or enter custom username: " USER_CHOICE
+    read -r -p "Choose (1/2) or enter custom username: " USER_CHOICE
     case "$USER_CHOICE" in
         1) CAMERA_USER="$ACTUAL_USER" ;;
-        2) read -p "Enter username for dedicated camera user: " CAMERA_USER
+        2) read -r -p "Enter username for dedicated camera user: " CAMERA_USER
            [ -z "$CAMERA_USER" ] && { echo "ERROR: Username required"; exit 1; } ;;
         "") echo "ERROR: Choose an option or enter a username"; exit 1 ;;
         *) CAMERA_USER="$USER_CHOICE" ;;
     esac
 fi
+[[ "$CAMERA_USER" =~ ^[a-z_][a-z0-9_-]*\$?$ ]] || { echo "Invalid system username"; exit 1; }
 echo "Streaming user: $CAMERA_USER"
 
 if ! id "$CAMERA_USER" &>/dev/null; then
@@ -128,10 +127,10 @@ fi
 echo ""
 echo "Set a username/password required to VIEW the stream."
 echo "(This is a second layer behind the Tailscale VPN.)"
-read -p "  Stream username [view]: " STREAM_USER
+IFS= read -r -p "  Stream username [view]: " STREAM_USER
 STREAM_USER=${STREAM_USER:-view}
 while true; do
-    read -s -p "  Stream password: " STREAM_PASS; echo
+    IFS= read -r -s -p "  Stream password: " STREAM_PASS; echo
     [ -n "$STREAM_PASS" ] && break
     echo "  Password cannot be empty."
 done
@@ -140,6 +139,7 @@ done
 # 6. Pick resolution / bitrate / fps for the detected hardware
 # ---------------------------------------------------------------------------
 case "$PI_PERFORMANCE" in
+    software) WIDTH=1280; HEIGHT=720; BITRATE=2000000; FRAMERATE=24 ;;
     maximum) WIDTH=1920; HEIGHT=1080; BITRATE=3000000; FRAMERATE=30 ;;
     high)    if [ "$CAMERA_TYPE" = "v2" ] || [ "$CAMERA_TYPE" = "hq" ]; then
                  WIDTH=1920; HEIGHT=1080; BITRATE=3000000; FRAMERATE=24
@@ -151,96 +151,48 @@ esac
 echo ""
 echo "Stream settings: ${WIDTH}x${HEIGHT} @ ${FRAMERATE}fps, ${BITRATE} bps"
 
-# ---------------------------------------------------------------------------
-# 7. Install MediaMTX (ARM binary) if missing
-# ---------------------------------------------------------------------------
-echo ""
+# Stage a pinned, checksum-verified release and safely serialized configuration.
 echo "Installing dependencies..."
 sudo apt-get update
-sudo apt-get install -y curl tar ffmpeg bc   # ffprobe for verification; bc for diagnose.sh
+sudo apt-get install -y curl tar ffmpeg bc python3-yaml
+MTX_TAG=v1.21.0
+ARCHIVE="mediamtx_${MTX_TAG}_${MTX_ARCH}.tar.gz"
+BASE_URL="https://github.com/bluenviron/mediamtx/releases/download/${MTX_TAG}"
+curl -fsSL "$BASE_URL/$ARCHIVE" -o "$TMP_DIR/$ARCHIVE"
+curl -fsSL "$BASE_URL/checksums.sha256" -o "$TMP_DIR/checksums.sha256"
+python3 scripts/camera_setup.py checksum "$TMP_DIR/$ARCHIVE" "$TMP_DIR/checksums.sha256"
+tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR" mediamtx
+[ "$("$TMP_DIR/mediamtx" --version)" = "$MTX_TAG" ] || { echo "Unexpected binary version"; exit 1; }
+export STREAM_USER STREAM_PASS WIDTH HEIGHT FRAMERATE BITRATE
+python3 scripts/camera_setup.py render mediamtx.yml > "$TMP_DIR/mediamtx.yml"
+sed -e "s/CAMERA_USER_PLACEHOLDER/${CAMERA_USER}/" \
+    -e "s/CAMERA_MEMORY_MAX_PLACEHOLDER/${MEMORY_MAX}M/" mediamtx.service > "$TMP_DIR/mediamtx.service"
 
-if command -v mediamtx &> /dev/null || [ -x /usr/local/bin/mediamtx ]; then
-    echo "✓ MediaMTX already installed ($(/usr/local/bin/mediamtx --version 2>/dev/null | head -1))"
-else
-    echo "Downloading MediaMTX for this architecture..."
-    # Map uname -m to MediaMTX release arch suffix
-    case "$(uname -m)" in
-        aarch64|arm64) MTX_ARCH="linux_arm64" ;;
-        armv7l)        MTX_ARCH="linux_armv7" ;;
-        armv6l)        MTX_ARCH="linux_armv6" ;;
-        x86_64|amd64)  MTX_ARCH="linux_amd64" ;;
-        *) echo "ERROR: unsupported architecture $(uname -m)"; exit 1 ;;
-    esac
-    # Resolve the latest release tag from GitHub
-    MTX_TAG=$(curl -fsSL https://api.github.com/repos/bluenviron/mediamtx/releases/latest \
-        | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4)
-    [ -z "$MTX_TAG" ] && { echo "ERROR: could not resolve MediaMTX release tag"; exit 1; }
-    MTX_URL="https://github.com/bluenviron/mediamtx/releases/download/${MTX_TAG}/mediamtx_${MTX_TAG}_${MTX_ARCH}.tar.gz"
-    echo "  ${MTX_TAG} (${MTX_ARCH})"
-    TMP_DIR=$(mktemp -d)
-    curl -fsSL "$MTX_URL" -o "$TMP_DIR/mediamtx.tar.gz"
-    tar -xzf "$TMP_DIR/mediamtx.tar.gz" -C "$TMP_DIR"
-    sudo install -m 0755 "$TMP_DIR/mediamtx" /usr/local/bin/mediamtx
-    rm -rf "$TMP_DIR"
-    echo "✓ MediaMTX installed to /usr/local/bin/mediamtx"
-fi
-
-# ---------------------------------------------------------------------------
-# 8. Write MediaMTX config from template (inject settings + credentials)
-# ---------------------------------------------------------------------------
-echo "Writing MediaMTX config..."
-sudo mkdir -p /usr/local/etc
-if [ -f /usr/local/etc/mediamtx.yml ]; then
-    sudo cp /usr/local/etc/mediamtx.yml /usr/local/etc/mediamtx.yml.backup.$(date +%Y%m%d_%H%M%S)
-fi
-
-# Escape sed-sensitive characters in the password
-ESC_PASS=$(printf '%s' "$STREAM_PASS" | sed -e 's/[\/&]/\\&/g')
-
-sed -e "s/CAMERA_STREAM_USER_PLACEHOLDER/${STREAM_USER}/" \
-    -e "s/CAMERA_STREAM_PASS_PLACEHOLDER/${ESC_PASS}/" \
-    -e "s/RPI_WIDTH_PLACEHOLDER/${WIDTH}/" \
-    -e "s/RPI_HEIGHT_PLACEHOLDER/${HEIGHT}/" \
-    -e "s/RPI_FPS_PLACEHOLDER/${FRAMERATE}/" \
-    -e "s/RPI_BITRATE_PLACEHOLDER/${BITRATE}/" \
-    mediamtx.yml | sudo tee /usr/local/etc/mediamtx.yml > /dev/null
-# Config holds a password — restrict readability to root + the streaming user.
-sudo chown root:video /usr/local/etc/mediamtx.yml
-sudo chmod 640 /usr/local/etc/mediamtx.yml
-echo "✓ Config written to /usr/local/etc/mediamtx.yml (mode 640)"
-
-# ---------------------------------------------------------------------------
-# 9. Install the systemd service
-# ---------------------------------------------------------------------------
-echo "Installing systemd service..."
-systemctl is-active --quiet mediamtx && sudo systemctl stop mediamtx
-if [ -f /etc/systemd/system/mediamtx.service ]; then
-    sudo cp /etc/systemd/system/mediamtx.service /etc/systemd/system/mediamtx.service.backup.$(date +%Y%m%d_%H%M%S)
-fi
-sed "s/CAMERA_USER_PLACEHOLDER/${CAMERA_USER}/" mediamtx.service \
-    | sudo tee /etc/systemd/system/mediamtx.service > /dev/null
-
-# Retire the old cvlc-based service if it exists
-if [ -f /etc/systemd/system/rtsp-camera.service ]; then
-    echo "Disabling legacy rtsp-camera (cvlc) service..."
-    sudo systemctl disable --now rtsp-camera 2>/dev/null || true
-    sudo mv /etc/systemd/system/rtsp-camera.service \
-        /etc/systemd/system/rtsp-camera.service.retired.$(date +%Y%m%d_%H%M%S)
-    # Remove the old cron monitor (MediaMTX + Restart=always replaces it)
-    (sudo crontab -l 2>/dev/null | grep -v "camera-monitor.sh") | sudo crontab - 2>/dev/null || true
-fi
-
+camera_snapshot
+TRANSACTION=true
+if [ "$OLD_ACTIVE" = true ]; then sudo systemctl stop mediamtx; fi
+if [ "$LEGACY_ACTIVE" = true ]; then sudo systemctl stop rtsp-camera; fi
+sudo install -d /usr/local/bin /usr/local/etc /etc/systemd/system
+sudo install -m 0755 "$TMP_DIR/mediamtx" /usr/local/bin/mediamtx
+sudo install -o root -g video -m 0640 "$TMP_DIR/mediamtx.yml" /usr/local/etc/mediamtx.yml
+sudo install -m 0644 "$TMP_DIR/mediamtx.service" /etc/systemd/system/mediamtx.service
 sudo systemctl daemon-reload
+sudo systemctl reset-failed mediamtx || true
 sudo systemctl enable mediamtx
 sudo systemctl start mediamtx
-sleep 5
-
-if ! systemctl is-active --quiet mediamtx; then
-    echo "✗ MediaMTX failed to start. Logs:"
-    sudo journalctl -u mediamtx -n 30 --no-pager
-    exit 1
+python3 scripts/camera_setup.py probe "$TMP_DIR/mediamtx.yml"
+unset STREAM_PASS
+TRANSACTION=false
+# Only retire the legacy service/watchdog after verified video; retain unit for rollback history.
+if [ -f /etc/systemd/system/rtsp-camera.service ]; then
+    sudo systemctl disable rtsp-camera
+    # Snapshot intentionally belongs to the invoking user, not root.
+    # shellcheck disable=SC2024
+    if sudo crontab -l > "$TMP_DIR/old-crontab" 2>/dev/null; then
+        (grep -v "camera-monitor.sh" "$TMP_DIR/old-crontab" || true) | sudo crontab -
+    fi
 fi
-echo "✓ MediaMTX service running"
+echo "MediaMTX is serving authenticated, decodable video."
 
 # ---------------------------------------------------------------------------
 # 10. Remote access mode — Tailscale (optional)

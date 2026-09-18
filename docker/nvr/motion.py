@@ -16,9 +16,11 @@ import numpy as np
 
 from .config import DETECT_FPS, DETECT_HEIGHT, DETECT_WIDTH, Camera
 from .db import Event
+from .process import stop_process
 
 log = logging.getLogger("nvr.motion")
 
+FRAME_TIMEOUT = 15.0
 RESTART_DELAY_MIN = 2.0
 RESTART_DELAY_MAX = 30.0
 
@@ -57,6 +59,7 @@ class Detector:
         self.cooldown = float(settings["cooldown"])
         self.min_duration = float(settings["min_duration"])
         self.alpha = float(settings["background_alpha"])
+        self.max_duration = float(settings["max_duration"])
 
         self.mask = build_mask(settings.get("mask") or [], width, height)
         self.total_pixels = int(self.mask.sum()) if self.mask is not None else width * height
@@ -111,6 +114,19 @@ class Detector:
         else:
             self._streak = 0
 
+        if self._start_ts is not None and ts - self._start_ts >= self.max_duration:
+            boundary = self._start_ts + self.max_duration
+            event = Event(self.camera, self._start_ts, boundary, self._peak)
+            # Continue a sustained event at the exact boundary; do not wait for quiet.
+            if area >= self.min_area:
+                self._start_ts = boundary
+                self._peak = area
+            else:
+                self._start_ts = None
+                self._peak = 0.0
+                self._streak = 0
+            return event
+
         if self._start_ts is not None and ts - self._last_motion_ts >= self.cooldown:
             return self._close()
         return None
@@ -143,7 +159,9 @@ def ffmpeg_args(url: str) -> list[str]:
         "-hide_banner",
         "-loglevel", "warning",
         "-rtsp_transport", "tcp",
+        "-threads", "1",
         "-i", url,
+        "-filter_threads", "1",
         "-an",
         "-vf", f"fps={DETECT_FPS},scale={DETECT_WIDTH}:{DETECT_HEIGHT}",
         "-pix_fmt", "gray",
@@ -173,8 +191,10 @@ class CameraWorker:
         delay = RESTART_DELAY_MIN
         while True:
             try:
+                started = time.monotonic()
                 await self._session()
-                delay = RESTART_DELAY_MIN
+                if time.monotonic() - started >= FRAME_TIMEOUT:
+                    delay = RESTART_DELAY_MIN
             except asyncio.CancelledError:
                 self.connected = False
                 raise
@@ -202,7 +222,7 @@ class CameraWorker:
         try:
             assert proc.stdout is not None
             while True:
-                chunk = await proc.stdout.readexactly(self.frame_bytes)
+                chunk = await asyncio.wait_for(proc.stdout.readexactly(self.frame_bytes), FRAME_TIMEOUT)
                 ts = time.time()
                 self.connected = True
                 self.last_frame_ts = ts
@@ -213,10 +233,10 @@ class CameraWorker:
         except asyncio.IncompleteReadError:
             log.info("%s: stream ended", self.camera.name)
         finally:
+            self.connected = False
             stderr_task.cancel()
-            if proc.returncode is None:
-                proc.kill()
-            await proc.wait()
+            await asyncio.gather(stderr_task, return_exceptions=True)
+            await stop_process(proc)
 
     async def _emit(self, event: Event | None) -> None:
         if event is None:

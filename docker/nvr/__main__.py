@@ -51,8 +51,11 @@ class State:
     db: Database
     store: ClipStore
     client: httpx.AsyncClient
-    workers: dict[str, CameraWorker] = {}
-    tasks: list[asyncio.Task] = []
+    def __init__(self):
+        self.workers: dict[str, CameraWorker] = {}
+        self.tasks: list[asyncio.Task] = []
+        self.clip_tasks: list[asyncio.Task] = []
+        self.clip_queue: asyncio.Queue = asyncio.Queue(maxsize=32)
 
     def camera(self, name: str) -> cfg.Camera:
         for cam in self.conf.cameras:
@@ -81,7 +84,28 @@ def check_auth(credentials: HTTPBasicCredentials = Depends(security)) -> str:
 async def on_motion(event: Event) -> None:
     event_id = await asyncio.to_thread(state.db.insert, event)
     camera = next(c for c in state.conf.cameras if c.name == event.camera)
-    asyncio.create_task(_capture(event_id, event, camera))
+    if not camera.record:
+        return
+    try:
+        state.clip_queue.put_nowait((event_id, event, camera))
+    except asyncio.QueueFull:
+        log.warning("%s: clip queue full; event %d retained without clip; archive unaffected", event.camera, event_id)
+
+
+def positive_env(name: str, default: int) -> int:
+    value = os.environ.get(name, str(default))
+    if not value.isascii() or not value.isdecimal() or int(value) <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return int(value)
+
+
+async def clip_worker():
+    while True:
+        job = await state.clip_queue.get()
+        try:
+            await _capture(*job)
+        finally:
+            state.clip_queue.task_done()
 
 
 async def _capture(event_id: int, event: Event, camera: cfg.Camera) -> None:
@@ -109,11 +133,17 @@ async def lifespan(app: FastAPI):
     if not os.environ.get("NVR_PASS"):
         raise SystemExit("NVR_PASS is not set -- refusing to start without a web password")
 
+    state.workers = {}
+    state.tasks = []
+    state.clip_tasks = []
+    state.clip_queue = asyncio.Queue(maxsize=positive_env("NVR_CLIP_QUEUE_SIZE", 32))
+    clip_workers = positive_env("NVR_CLIP_WORKERS", 2)
     state.conf = cfg.load(CONFIG_PATH)
     state.db = Database(DATA_DIR / "events.db")
     state.store = ClipStore(DATA_DIR, PLAYBACK_BASE, state.db)
     state.client = httpx.AsyncClient(timeout=30.0)
 
+    state.clip_tasks = [asyncio.create_task(clip_worker(), name=f"clip:{i}") for i in range(clip_workers)]
     for camera in state.conf.cameras:
         worker = CameraWorker(camera, f"{RTSP_BASE}/{camera.detect_path}", on_motion)
         state.workers[camera.name] = worker
@@ -127,6 +157,15 @@ async def lifespan(app: FastAPI):
         for task in state.tasks:
             task.cancel()
         await asyncio.gather(*state.tasks, return_exceptions=True)
+        for task in state.clip_tasks:
+            task.cancel()
+        await asyncio.gather(*state.clip_tasks, return_exceptions=True)
+        while not state.clip_queue.empty():
+            state.clip_queue.get_nowait()
+            state.clip_queue.task_done()
+        state.tasks.clear()
+        state.clip_tasks.clear()
+        state.workers.clear()
         await state.client.aclose()
 
 

@@ -16,7 +16,7 @@ hours or days.
   invisible to the public internet
 - **Stream authentication** (username/password) as defense in depth
 - **Automatic startup + self-restart** using systemd (`Restart=always`)
-- **Low resource usage** — MediaMTX is a single zero-dependency binary
+- **Lean streaming pipeline** — MediaMTX replaces VLC; native camera capture still uses Raspberry Pi OS camera libraries
 - **Optional hardening**: hardware watchdog + log2ram for unattended 24/7 use
 - **Optional recording** — a Dockerized NVR for a separate machine: 24/7
   recording, motion clips, retention and a browsing UI ([docs/nvr.md](docs/nvr.md))
@@ -31,8 +31,8 @@ hours or days.
 - **Raspberry Pi Zero 2 W** (720p streaming)
 - **Raspberry Pi 3 Model B/B+** (1080p streaming) 
 - **Raspberry Pi 4 Model B** (1080p streaming, 30fps)
-- **Raspberry Pi 5** (1080p streaming, 30fps)
-- **Raspberry Pi Zero** (480p streaming, limited performance)
+- **Raspberry Pi 5** (720p, 24fps initial profile; software H.264)
+- **Raspberry Pi Zero** (480p, limited performance; memory override may be needed)
 
 ### Supported Camera Modules
 - **Camera Module v1** (OV5647) - 5MP, up to 1080p
@@ -41,13 +41,14 @@ hours or days.
 
 ### Other Requirements
 - MicroSD card (8GB+ recommended, 16GB+ for Pi 4/5)
-- Stable power supply (2.5A for Pi 3, 3A for Pi 4/5)
+- Stable model-appropriate power supply (Pi 5 needs its own appropriate supply, not an assumed Pi 4 supply)
 
 ## Software Requirements
 
-- Raspberry Pi OS (Bookworm or newer recommended)
+- Raspberry Pi OS Bookworm or Trixie (32-bit or 64-bit; other OS releases are rejected)
+- Python 3 for read-only platform preflight; setup installs python3-yaml
 - libcamera / rpicam-apps (included in modern Raspberry Pi OS)
-- MediaMTX (installed automatically by `run.sh`)
+- MediaMTX v1.21.0 (pinned and checksum-verified by `run.sh`)
 - Tailscale (installed by `setup-tailscale.sh`, for secure remote access)
 
 ## Installation
@@ -166,7 +167,8 @@ The setup script automatically optimizes video settings based on your hardware:
 #### Automatic Optimization Table
 | Pi Model | Camera | Resolution | Bitrate | FPS | Notes |
 |----------|--------|------------|---------|-----|-------|
-| **Pi 4/5** | Any | 1080p | 3-4 Mbps | 30 | Maximum performance |
+| **Pi 4** | Any | 1080p | 3 Mbps | 30 | Hardware H.264 |
+| **Pi 5** | Any | 720p | 2 Mbps | 24 | Software H.264; tune after measurement |
 | **Pi 3** | v2/HQ | 1080p | 3 Mbps | 24 | High quality streaming |
 | **Pi 3** | v1 | 720p | 2 Mbps | 24 | Balanced performance |
 | **Pi Zero 2W** | Any | 720p | 2 Mbps | 24 | Optimized for hardware |
@@ -181,35 +183,46 @@ sudo systemctl restart mediamtx
 
 **Note**: The setup script detects your hardware and applies optimal settings automatically. Manual changes may affect performance and stability.
 
-### GPU Memory Configuration
+### Memory and compatibility
 
-For optimal camera streaming performance, ensure adequate GPU memory allocation:
+The libcamera camera stack uses Linux CMA buffers, **not** the legacy `gpu_mem`
+split. Do not increase `gpu_mem` to 128/256 MB for RaspRec. The compatibility
+helper `./setup-gpu-memory.sh` now only reports memory; it changes nothing.
+Existing custom boot-memory settings are preserved and need manual review.
 
-**Automatic Configuration (Recommended):**
+MediaMTX uses `rpiCameraCodec: auto`: hardware H.264 where available, software
+H.264 on Pi 5. These resolution/FPS settings are initial targets, not measured
+performance guarantees. Pi 5 users can try 1080p after checking CPU, temperature,
+service memory and stream stability. Unsupported cameras or boards are not made
+compatible merely by selecting a binary.
+
+The service defaults to **200 MB** for hardware profiles and **512 MB** for Pi 5.
+Override during setup, for example:
+
 ```bash
-./setup-gpu-memory.sh
+CAMERA_MEMORY_MAX_MB=256 ./run.sh
 ```
 
-**Manual Configuration:**
-```bash
-# Edit config file
-sudo nano /boot/firmware/config.txt  # (or /boot/config.txt on older systems)
-# Add or modify:
-gpu_mem=128
-# Reboot to apply
-sudo reboot
-```
+The limit must be a positive integer and no more than half the Linux-reported
+`MemTotal`, leaving room for the OS, CMA, Tailscale and logging. A 256 MB board
+will require a smaller explicit override (e.g. 100 MB), with no guarantee its
+camera workload fits. These are cgroup ceilings, not memory reservations or a
+proof that a given workload fits. Run `./diagnose.sh` to inspect available/CMA
+memory, service usage, OOM messages and restart counts.
 
-**Check Current Setting:**
-```bash
-vcgencmd get_mem gpu
-```
+Setup selects the release using userspace architecture and CPU capability,
+including a 32-bit userspace on a 64-bit kernel. It stages the pinned binary and
+serialized YAML (using MediaMTX-compatible credential hashes when plaintext characters are unsupported), keeps timestamped backups, and only reports success after an
+authenticated video frame decodes. Failed activation restores previous managed
+files and service states. Dependency packages and newly created user accounts
+are not rolled back. No credentials are printed by the readiness probe; its
+FFmpeg process still has the RTSP URL in its local process arguments.
 
 ### Service Configuration
 
 The `mediamtx` systemd service is configured with:
-- **Memory limit**: 200MB with accounting
-- **Auto-restart**: `Restart=always`, 5s delay, with start-burst limits
+- **Memory limit**: 200 MB hardware / 512 MB Pi 5, configurable with accounting
+- **Auto-restart**: `Restart=always`, 30s delay, no permanent start-rate lockout
 - **Security hardening**: `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`
 - **User**: streaming user (in the `video` group)
 - **Binary**: `/usr/local/bin/mediamtx`, config `/usr/local/etc/mediamtx.yml`
@@ -225,7 +238,7 @@ rasprec/
 ├── mediamtx.service             # systemd unit for MediaMTX
 ├── setup-tailscale.sh           # Secure remote access (Tailscale VPN)
 ├── setup-hardening.sh           # Watchdog + log2ram for unattended use
-├── setup-gpu-memory.sh          # GPU memory configuration helper
+├── setup-gpu-memory.sh          # Read-only memory diagnostics
 ├── diagnose.sh                  # System diagnostic tool
 ├── docker/                      # NVR: recording stack (runs on a separate box)
 │   ├── compose.yml              # mediamtx + nvr containers
@@ -257,10 +270,10 @@ After running the setup:
   the leaky `cvlc` pipeline that dropped the stream after hours/days
 - **Automatic restart** on failure via systemd (`Restart=always`)
 - **RTSP over TCP** to avoid H.264 decode errors from UDP packet loss
-- **Memory limit** (200MB) with accounting
+- **Profile-specific memory limit** with accounting
 - **Optional hardware watchdog** — auto-reboots on a hard hang (`setup-hardening.sh`)
 - **Optional log2ram** — reduces SD-card wear for 24/7 operation
-- **GPU memory optimization** with automatic checks
+- **Memory diagnostics** for Linux/CMA and service OOM/restarts; no legacy GPU-memory changes
 
 ## Access Modes
 
@@ -368,9 +381,8 @@ For a Pi running 24/7 at a remote location (where you can't easily reboot it):
 ./setup-hardening.sh
 ```
 
-- **Hardware watchdog** — auto-reboots the Pi if it hard-hangs.
-- **log2ram** — keeps logs in RAM to reduce SD-card wear (SD corruption is the
-  most common failure mode for always-on Raspberry Pis).
+- **Hardware watchdog** — configured in a managed `[all]` boot section. Reboot, then verify `/dev/watchdog0` with `./diagnose.sh`. It does not detect an application-only camera stall.
+- **log2ram** — installs the complete pinned 1.7.2 distribution with a 64 MB ceiling, only when at least 128 MB RAM is available and existing logs fit within 48 MB. Existing installations retain their settings; insufficient headroom or failed installation produces a warning, not a success claim.
 
 Reboot afterwards to activate the watchdog: `sudo reboot`.
 
@@ -418,8 +430,8 @@ sudo journalctl -u mediamtx -n 100 --no-pager
 # Check for thermal/voltage throttling (0x0 = OK)
 vcgencmd get_throttled
 
-# Ensure GPU memory is adequate for the ISP/encoder
-vcgencmd get_mem gpu   # want 128M+
+# Inspect Linux/CMA memory and service restart/OOM diagnostics
+./diagnose.sh
 ```
 
 For an unattended Pi, run `./setup-hardening.sh` to add a hardware watchdog that
@@ -427,35 +439,16 @@ reboots the Pi on a hard hang.
 
 #### Camera Not Detected (Initial Setup)
 
-**Modern Raspberry Pi OS (Bookworm+):**
-Camera should be auto-detected by default. If not working:
+**Supported Raspberry Pi OS (Bookworm/Trixie):**
+Camera modules should be auto-detected. Check the ribbon cable first, then check
+`camera_auto_detect=1` in `/boot/firmware/config.txt`. If a supported third-party
+camera needs an explicit overlay, use the camera vendor's instructions. Boot
+settings are conditional: ensure changes are in the intended model section or
+`[all]`, and reboot afterwards.
 
-```bash
-# Check /boot/config.txt has:
-grep camera_auto_detect /boot/config.txt
-# Should show: camera_auto_detect=1
-
-# If missing, add it:
-echo "camera_auto_detect=1" | sudo tee -a /boot/config.txt
-sudo reboot
-```
-
-**For older/problematic cameras, try manual overlay:**
-```bash
-# Edit /boot/config.txt:
-sudo nano /boot/config.txt
-# Change: camera_auto_detect=1
-# To: camera_auto_detect=0
-#     dtoverlay=imx219  # (or your camera model)
-sudo reboot
-```
-
-**Legacy Raspberry Pi OS (Bullseye and older):**
-```bash
-sudo raspi-config
-# Navigate to: Interface Options → Camera → Enable
-sudo reboot
-```
+Bullseye and older releases, and the legacy camera stack, are not supported by
+the current installer. Use a supported Raspberry Pi OS rather than enabling the
+legacy camera stack as a workaround.
 
 **Test camera manually:**
 ```bash
@@ -479,7 +472,7 @@ vcgencmd get_camera
 
 #### MediaMTX/Streaming Issues
 
-**Reinstall MediaMTX:** re-run `./run.sh` (it re-downloads the binary and rewrites config).
+**Reinstall MediaMTX:** re-run `./run.sh` (it verifies and installs the pinned release, backs up files, and tests the stream).
 
 **Test MediaMTX manually (see live errors):**
 ```bash
@@ -507,11 +500,9 @@ sudo nano /usr/local/etc/mediamtx.yml
 sudo systemctl restart mediamtx
 ```
 
-**Increase GPU memory split:**
-```bash
-sudo raspi-config
-# Advanced Options → Memory Split → Set to 128 or 256
-```
+**Do not increase the legacy GPU memory split.** Check `MemAvailable`, CMA
+availability and `MemoryMax` via `./diagnose.sh`. Lower resolution/FPS first;
+change the service budget only after measuring the workload.
 
 ### SSH Connection Issues
 
@@ -682,7 +673,7 @@ sudo journalctl -u mediamtx --since "1 hour ago"
 7. ✅ Sufficient power supply (2.5A+)
 8. ✅ SD card not corrupted
 9. ✅ Streaming user in the `video` group
-10. ✅ GPU memory 128M+
+10. ✅ Adequate available/CMA memory; no service OOM events
 
 ### Getting Help
 
@@ -695,3 +686,30 @@ If issues persist:
 ## License
 
 ISC License - See package.json for details.
+
+## Development verification
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r docker/requirements.txt pytest pytest-asyncio
+PYTHONPATH=docker .venv/bin/python -m pytest tests docker/tests -q
+for f in *.sh scripts/*.sh; do bash -n "$f" || exit; done
+```
+
+Before declaring a hardware profile production-ready, test a hardware-encoding
+Pi and Pi 5 for 24 hours: verify authenticated video, memory/CPU/temperature,
+reboot recovery, repeated service failures, and network/camera interruption
+recovery. A running MediaMTX process alone does not prove video works.
+
+Optional Docker integration checks (fixture configurations only; pulls the pinned
+MediaMTX images and binds an ephemeral loopback port for authentication testing):
+
+```bash
+RUN_DOCKER_TESTS=1 PYTHONPATH=docker .venv/bin/python -m pytest tests docker/tests -q
+```
+
+Camera-source capture is not validated by these Docker tests: they check schema
+acceptance and authentication, not Pi hardware. Stream usernames cannot be `any`. Neither usernames nor passwords can contain
+a colon: the pinned MediaMTX RTSP Basic parser rejects it. Other supported login characters are
+preserved; values rejected by MediaMTX's plaintext credential syntax are stored
+in its SHA-256 representation. RTSP remains unencrypted without Tailscale.

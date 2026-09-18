@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 
 # Function to print status
 print_status() {
-    if [ $1 -eq 0 ]; then
+    if [ "$1" -eq 0 ]; then
         echo -e "${GREEN}✓${NC} $2"
     else
         echo -e "${RED}✗${NC} $2"
@@ -148,6 +148,20 @@ if awk "BEGIN{exit !($MEM_USAGE > 80)}"; then
     print_warning "High memory usage detected"
 fi
 
+echo '   Linux/CMA memory (kB):'
+grep -E '^(MemTotal|MemAvailable|CmaTotal|CmaFree):' /proc/meminfo
+echo '   Service memory and restart counters:'
+systemctl show mediamtx -p MemoryCurrent -p MemoryPeak -p MemoryMax -p NRestarts -p Result
+echo '   Recent kernel OOM events (may require journal access):'
+journalctl -k -b --no-pager -q 2>/dev/null | grep -Ei 'out of memory|oom-kill|killed process' | tail -10
+echo '   Watchdog device:'
+if [ -e /dev/watchdog0 ]; then
+    print_status 0 '/dev/watchdog0 available'
+    systemctl show -p RuntimeWatchdogUSec
+else
+    print_warning 'No watchdog device; reboot after setup, then inspect boot configuration'
+fi
+
 # Check temperature
 if command -v vcgencmd &>/dev/null; then
     TEMP=$(vcgencmd measure_temp | cut -d'=' -f2 | cut -d"'" -f1)
@@ -165,11 +179,13 @@ fi
 
 echo ""
 echo "9. Testing Camera Functionality..."
-if command -v rpicam-vid &>/dev/null; then
+if systemctl is-active --quiet mediamtx || systemctl is-active --quiet rtsp-camera; then
+    echo '   Skipping direct capture: streaming service owns the camera.'
+    echo '   Verify the authenticated RTSP stream with a player instead.'
+elif command -v rpicam-vid &>/dev/null; then
     print_status 0 "rpicam-vid command available"
     echo "   Testing camera capture (5 seconds)..."
-    timeout 5 rpicam-vid -t 5000 -o /tmp/test_camera.h264 &>/dev/null
-    if [ $? -eq 0 ] && [ -f "/tmp/test_camera.h264" ]; then
+    if timeout 10 rpicam-vid -t 5000 -o /tmp/test_camera.h264 &>/dev/null && [ -f "/tmp/test_camera.h264" ]; then
         FILE_SIZE=$(stat -f%z /tmp/test_camera.h264 2>/dev/null || stat -c%s /tmp/test_camera.h264 2>/dev/null)
         if [ "$FILE_SIZE" -gt 1000 ]; then
             print_status 0 "Camera capture test successful (${FILE_SIZE} bytes)"

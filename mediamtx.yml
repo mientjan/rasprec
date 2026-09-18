@@ -41,6 +41,7 @@ playback: no
 # more reliable across the VPN.
 rtsp: yes
 rtspTransports: [tcp]
+rtspAuthMethods: [basic]
 rtspAddress: :8554
 
 ###############################################
@@ -55,6 +56,8 @@ webrtcAddress: :8889
 # HLS/RTMP not needed for one-way phone viewing.
 hls: no
 rtmp: no
+srt: no
+moq: no
 
 ###############################################
 # Camera path. View at:
@@ -67,4 +70,4 @@ paths:
     rpiCameraHeight: RPI_HEIGHT_PLACEHOLDER
     rpiCameraFPS: RPI_FPS_PLACEHOLDER
     rpiCameraBitrate: RPI_BITRATE_PLACEHOLDER
-    rpiCameraCodec: hardwareH264
+    rpiCameraCodec: auto

@@ -17,6 +17,7 @@ import httpx
 
 from .config import Camera
 from .db import Database, Event
+from .process import stop_process
 
 log = logging.getLogger("nvr.clips")
 
@@ -24,6 +25,8 @@ log = logging.getLogger("nvr.clips")
 SETTLE_SECONDS = 2.0
 DOWNLOAD_TIMEOUT = 120.0
 THUMB_WIDTH = 320
+THUMB_TIMEOUT = 30.0
+CAPTURE_TIMEOUT = 300.0
 
 
 class ClipStore:
@@ -39,6 +42,10 @@ class ClipStore:
         return Path(kind, camera, moment.strftime("%Y-%m-%d"), f"{moment:%H%M%S}-{event_id}.{ext}")
 
     async def capture(self, event_id: int, event: Event, camera: Camera) -> None:
+        async with asyncio.timeout(CAPTURE_TIMEOUT):
+            await self._capture(event_id, event, camera)
+
+    async def _capture(self, event_id: int, event: Event, camera: Camera) -> None:
         pre_roll = float(camera.motion["pre_roll"])
         post_roll = float(camera.motion["post_roll"])
         start = event.start_ts - pre_roll
@@ -52,21 +59,23 @@ class ClipStore:
         clip_abs = self.root / clip_rel
         clip_abs.parent.mkdir(parents=True, exist_ok=True)
 
-        if not await self._download(camera.name, start, duration, clip_abs):
-            return
-
         thumb_rel = self._relative("thumbs", camera.name, event_id, event.start_ts, "jpg")
         thumb_abs = self.root / thumb_rel
         thumb_abs.parent.mkdir(parents=True, exist_ok=True)
-        has_thumb = await self._thumbnail(clip_abs, thumb_abs, duration / 2)
-
-        await asyncio.to_thread(
-            self.db.set_media,
-            event_id,
-            str(clip_rel),
-            str(thumb_rel) if has_thumb else None,
-        )
-        log.info("%s: saved clip %s (%.1fs)", camera.name, clip_rel, duration)
+        committed = False
+        try:
+            if not await self._download(camera.name, start, duration, clip_abs):
+                return
+            has_thumb = await self._thumbnail(clip_abs, thumb_abs, duration / 2)
+            # Small SQLite transaction: no cancellation point between commit and ownership flag.
+            self.db.set_media(event_id, str(clip_rel), str(thumb_rel) if has_thumb else None)
+            committed = True
+            log.info("%s: saved clip %s (%.1fs)", camera.name, clip_rel, duration)
+        finally:
+            if not committed:
+                clip_abs.unlink(missing_ok=True)
+                thumb_abs.unlink(missing_ok=True)
+            clip_abs.with_suffix('.mp4.part').unlink(missing_ok=True)
 
     async def _download(self, path: str, start: float, duration: float, dest: Path) -> bool:
         params = {
@@ -106,8 +115,11 @@ class ClipStore:
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
             "-hide_banner", "-loglevel", "error", "-y",
-            "-i", str(clip),
             "-ss", f"{max(offset, 0):.3f}",
+            "-threads", "1",
+            "-i", str(clip),
+            "-threads", "1",
+            "-filter_threads", "1",
             "-frames:v", "1",
             "-vf", f"scale={THUMB_WIDTH}:-2",
             "-q:v", "5",
@@ -115,11 +127,20 @@ class ClipStore:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, stderr = await proc.communicate()
-        if proc.returncode != 0 or not dest.exists():
-            log.warning("thumbnail failed for %s: %s", clip, stderr.decode(errors="replace").strip())
+        success = False
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), THUMB_TIMEOUT)
+            success = proc.returncode == 0 and dest.exists() and dest.stat().st_size > 0
+            if not success:
+                log.warning("thumbnail failed for %s: %s", clip, stderr.decode(errors="replace").strip())
+            return success
+        except TimeoutError:
+            log.warning("thumbnail timed out for %s", clip)
             return False
-        return True
+        finally:
+            await stop_process(proc)
+            if not success:
+                dest.unlink(missing_ok=True)
 
     async def purge(self, retention_seconds: float) -> int:
         """Delete clips (and their event rows) past the retention window."""

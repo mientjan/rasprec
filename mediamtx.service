@@ -2,19 +2,18 @@
 Description=RaspRec MediaMTX camera stream
 After=network-online.target
 Wants=network-online.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/mediamtx /usr/local/etc/mediamtx.yml
 Restart=always
-RestartSec=5
+RestartSec=30
 User=CAMERA_USER_PLACEHOLDER
 Group=video
 
 # Resource limits for stability (MediaMTX is far lighter than VLC)
-MemoryMax=200M
+MemoryMax=CAMERA_MEMORY_MAX_PLACEHOLDER
 MemoryAccounting=true
 
 # Logging

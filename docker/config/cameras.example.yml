@@ -10,6 +10,7 @@ retention:
 motion:
   sensitivity: 25   # per-pixel difference threshold, 0-255. Lower = touchier.
   min_area: 0.4     # % of the frame that must change
+  max_duration: 5m  # split sustained motion; max 1h
   cooldown: 15s     # quiet time before an event is closed
   pre_roll: 5s      # seconds of archive kept before the trigger
   post_roll: 10s    # ...and after it

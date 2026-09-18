@@ -140,3 +140,17 @@ __pycache__/
 *.pyc
 
 .venv/
+
+# Monorepo runtime state (examples remain tracked)
+**/.env
+**/.env.*
+!**/.env.example
+server/config/cameras.yml
+server/data/
+server/runtime/
+server/**/*.db
+server/**/*.db-*
+server/**/*.pem
+server/**/*.key
+server/infra/aws/*.parameters.json
+.venv/

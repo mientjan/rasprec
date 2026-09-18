@@ -1,0 +1,52 @@
+name: Project checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  device:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install pytest PyYAML
+      - run: python -m pytest device/tests -q
+      - name: Shell syntax
+        run: find device -name '*.sh' -exec bash -n {} \; && bash -n install.sh
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install -r server/requirements.txt pytest pytest-asyncio pip-audit cfn-lint
+      - run: cd server && python -m pytest -q
+      - run: node --check server/nvr/web/app.js
+      - run: cfn-lint server/infra/aws/stack.yml
+      - run: pip-audit -r server/requirements.txt
+      - name: Compose configurations (synthetic inputs only)
+        env:
+          NVR_DOMAIN: cameras.example.com
+        run: |
+          export NVR_ENV_FILE="$PWD/server/.env.example"
+          docker compose -f server/compose.yml config --quiet
+          docker compose -f server/compose.yml -f server/compose.aws.yml config --quiet
+      - run: docker build -t rasprec-nvr:test server
+      - name: Synthetic camera integration
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          RUN_DOCKER_TESTS=1 PYTHONPATH=server python -m pytest device/tests/test_mediamtx_integration.py server/tests/test_media_integration.py -q
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Install checksum-verified scanner
+        working-directory: /tmp
+        run: |
+          curl -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz
+          curl -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_checksums.txt
+          grep ' gitleaks_8.24.3_linux_x64.tar.gz$' gitleaks_8.24.3_checksums.txt | sha256sum -c -
+          tar -xzf gitleaks_8.24.3_linux_x64.tar.gz gitleaks
+      - run: /tmp/gitleaks git --redact --no-banner
+      - run: /tmp/gitleaks dir --redact --no-banner .

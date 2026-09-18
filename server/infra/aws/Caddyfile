@@ -1,0 +1,7 @@
+{$NVR_DOMAIN} {
+    header Strict-Transport-Security "max-age=31536000"
+    request_body {
+        max_size 8KB
+    }
+    reverse_proxy nvr:8080
+}

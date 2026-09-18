@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!requirements.txt
+!nvr/
+!nvr/**
+**/__pycache__
+**/*.pyc

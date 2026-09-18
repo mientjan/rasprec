@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run explicitly on the dedicated Ubuntu 24.04 server after mounting its data disk.
-# Never formats disks, enrolls Tailscale, reads secrets, or starts RaspRec.
+# Never formats disks, enrolls cameras, reads secrets, or starts RaspRec.
 set -euo pipefail
 [ "$EUID" -eq 0 ] || { echo "Run with sudo." >&2; exit 1; }
 . /etc/os-release
@@ -23,16 +23,14 @@ Components: stable
 Architectures: amd64
 Signed-By: /etc/apt/keyrings/docker.asc
 SOURCES
-curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg -o /etc/apt/keyrings/tailscale.gpg
-echo "deb [signed-by=/etc/apt/keyrings/tailscale.gpg] https://pkgs.tailscale.com/stable/ubuntu noble main" > /etc/apt/sources.list.d/tailscale.list
 apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin tailscale
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl daemon-reload
-systemctl enable --now docker tailscaled
+systemctl enable --now docker
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 curl -fsSL https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -o "$tmp/agent.deb"
 dpkg -i "$tmp/agent.deb"
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl     -a fetch-config -m ec2 -c "file:$HERE/cloudwatch.json" -s
 install -d -m 0700 /etc/rasprec /etc/rasprec/config
-echo "Host prepared. Enroll Tailscale, supply private runtime config, then run start.sh."
+echo "Host prepared. Supply private runtime config, then run start.sh."

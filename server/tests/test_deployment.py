@@ -25,6 +25,7 @@ def test_public_ports_and_mount_safety():
     override = yaml.load((ROOT / "compose.aws.yml").read_text(), Loader=TemplateLoader)
     services = override["services"]
     assert services["nvr"]["ports"] == []
+    assert services["mediamtx"]["ports"] == ["1936:1936"]
     assert services["nvr"]["environment"]["NVR_AUTH_MODE"] == "session"
     assert services["caddy"]["ports"] == ["80:80", "443:443"]
     for name in ["nvr-config", "mediamtx", "nvr", "caddy"]:
@@ -45,7 +46,7 @@ def test_infrastructure_retains_encrypted_data_without_secrets():
     assert data["Properties"]["Encrypted"] is True
     assert resources["Instance"]["Properties"]["MetadataOptions"]["HttpTokens"] == "required"
     ingress = resources["SecurityGroup"]["Properties"]["SecurityGroupIngress"]
-    assert {rule["FromPort"] for rule in ingress} == {80, 443}
+    assert {rule["FromPort"] for rule in ingress} == {80, 443, 1936}
     assert not any("password" in name.lower() or "secret" in name.lower() for name in stack["Parameters"])
     assert "UserData" not in resources["Instance"]["Properties"]
 

@@ -1,0 +1,7 @@
+{
+  "server_host": "cameras.example.com",
+  "server_port": 1936,
+  "camera": "front-door",
+  "publish_token": "REPLACE_WITH_UNIQUE_RANDOM_TOKEN",
+  "source_url": "rtsp://view:REPLACE_WITH_LOCAL_PASSWORD@127.0.0.1:8554/cam"
+}

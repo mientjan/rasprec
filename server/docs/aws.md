@@ -3,11 +3,12 @@
 ## Architecture and prerequisites
 
 One EC2 server runs Docker Compose, MediaMTX, the NVR, and Caddy. An encrypted retained
-EBS data volume holds recordings, SQLite, images, and TLS state. Only 80/443 are public.
-SSM provides administration; host Tailscale reaches private Pi RTSP streams. No viewer VPN.
+EBS data volume holds recordings, SQLite, images, and TLS state. Public ports are 80 (certificate challenges/HTTPS redirect), 443 (website), and
+1936 (TLS-only RTMPS ingest). SSM provides administration. Each Pi initiates an
+authenticated outbound connection; there is no Tailscale dependency and no router forwarding.
 
 Use an AWS account with permission to create the CloudFormation resources/IAM role,
-a domain whose DNS you control, a tailnet, and a full source checkout. Default sizing:
+a domain whose DNS you control, and a full source checkout. Default sizing:
 eu-west-1, t3.large, 250 GiB data plus 30 GiB root. T3 uses standard CPU credits to avoid
 surprise surplus-credit billing; sustained work can exhaust credits. Measure before adding cameras.
 
@@ -38,46 +39,71 @@ Do not use an arbitrary /dev/nvme name in fstab. Mount and verify with `findmnt 
 
 Clone the repository to /opt/rasprec (full checkout). Run:
 `sudo bash /opt/rasprec/server/infra/aws/bootstrap-host.sh`.
-This installs Docker, Tailscale and CloudWatch agent but **does not format storage or start recording**.
+This installs Docker and CloudWatch agent but **does not format storage or start recording**.
 The installed Docker systemd drop-in requires the mount even on reboot, before container
 restart policies run. Review package installation against the official
-[Docker](https://docs.docker.com/engine/install/ubuntu/) and
-[Tailscale](https://tailscale.com/docs/install/linux) instructions.
+[Docker](https://docs.docker.com/engine/install/ubuntu/) instructions.
 
-## 2. Enroll cameras privately and configure runtime
+## 2. Register cameras and obtain certificates
 
-Run `sudo tailscale up` interactively, not with a key stored in a script.
-Enroll each Pi separately. Set a tailnet policy allowing the recorder to reach only
-the required Pi RTSP ports; no router forwarding. Use stable tailnet IPs in recorder URLs.
-Check connectivity from the MediaMTX container too; host-only connectivity is not sufficient.
+Create /etc/rasprec/config/cameras.yml privately from **config/cameras.push.example.yml**
+and /etc/rasprec/nvr.env privately from .env.example. Directories should be mode 700;
+files should be root-owned mode 600. Never put actual values in the repository.
 
-Create /etc/rasprec/config/cameras.yml privately from the example and
-/etc/rasprec/nvr.env privately from .env.example. Both directories should be mode 700;
-the files should be root-owned mode 600. Never copy runtime values into the repository.
+For each camera add source: push and a publish_token environment reference. Generate
+a different 32-byte random token per camera with secrets.token_urlsafe(32), store it
+in nvr.env, and transfer it privately to that Pi's setup prompt. Each token only
+authorizes publishing the named camera; it does not grant website or playback access.
+The server rejects missing, short, shared, or non-URL-safe tokens.
 
-Set NVR_AUTH_MODE=session, NVR_USER, NVR_PASSWORD_HASH,
-NVR_DOMAIN (hostname only), NVR_PUBLIC_ORIGIN=https://the-same-hostname, and
-the camera-password environment variables used by cameras.yml. The AWS override
-forces session authentication and hardcodes the mounted data location.
-Leave NVR_PASS blank in public mode.
+Set NVR_AUTH_MODE=session, NVR_USER, NVR_PASSWORD_HASH, NVR_DOMAIN (hostname only),
+NVR_PUBLIC_ORIGIN=https://the-same-hostname, and NVR_ACME_EMAIL for certificate account
+contact. Leave NVR_PASS blank. The AWS override forces session auth and the mounted
+data location. NVR_INTERNAL_READER_IP must match the NVR container's private address.
 
-Build the image with `sudo docker build -t rasprec-nvr:latest /opt/rasprec/server`,
-then run `sudo docker run --rm -it rasprec-nvr:latest -m nvr.password` in a private
-terminal to generate the hash. Store its single-quoted assignment only in nvr.env.
-Never enable shell tracing or run non-quiet Compose config commands with real secrets.
-Prefer interactive editing over commands containing secrets in shell history.
+Build with sudo docker build -t rasprec-nvr:latest /opt/rasprec/server and run
+sudo docker run --rm -it rasprec-nvr:latest -m nvr.password in a private terminal.
+Store the single-quoted assignment only in nvr.env, never in source or shell history.
 
-Point the domain's A record at the Elastic IP. Ensure no stale AAAA record points elsewhere.
-Start with `sudo bash /opt/rasprec/server/infra/aws/start.sh`.
-The script validates configuration quietly, regenerates camera configuration, builds,
-and recreates the services. Caddy manages [HTTPS certificates](https://caddyserver.com/docs/automatic-https).
-Camera credentials remain inside private runtime mounts/container environments.
+Point the domain's A record at the Elastic IP. Remove stale AAAA records unless IPv6
+is deliberately configured. Ports 80, 443 and 1936 must reach this server.
+Run sudo bash /opt/rasprec/server/infra/aws/start.sh.
+
+The launcher starts Caddy first for HTTP certificate challenges, obtains a separate
+RTMPS certificate with Certbot, then starts the recorder. Caddy continues to manage
+the website's HTTPS certificate. These certificates cover the same hostname but have
+separate renewal lifecycles. RTMPS is strict: there is no plaintext 1935 listener.
+Certificate keys/ACME state live outside Git in /etc/rasprec/letsencrypt and are mounted
+read-only only into MediaMTX, not the web application.
+
+The launcher enables rasprec-certificates.timer (twice daily, with jitter). On successful
+renewal it restarts MediaMTX only if the certificate changed; cameras reconnect automatically.
+This causes a short recording gap. Watch the timer's status and journal; ACME renewal
+requires the DNS/HTTP challenge path to remain reachable. Expired/untrusted/wrong-host
+certificates are rejected by the Pi, never bypassed. Test renewal with Certbot's
+renew --dry-run before relying on unattended service.
+
+Finally run bash setup-publisher.sh on each Pi as described in
+[device cloud setup](../../../device/README.cloud.md). Verify the camera in the website.
+No camera IP addresses or inbound home-router ports are required.
+
+### Rotate or revoke one camera
+
+Change only that camera's token in the private server environment and rerun start.sh.
+Recreating MediaMTX disconnects existing publishers, so the old token is immediately
+unusable for new connections. Install the matching new token on the intended Pi and
+restart its publisher. To revoke without replacement, rotate to an unused token,
+or remove the camera entry and recreate the stack if other cameras remain. The
+configuration requires at least one camera; stop the recorder to retire all cameras. Other credentials stay unchanged, though the restart briefly
+interrupts all streams. Restart rather than merely editing a file: existing sessions
+must also be closed. Never log or publish old/new tokens.
 
 ## 3. Verify and operate
 
-- From a non-tailnet browser, load HTTPS, sign in, view camera status, and capture media.
+- From a normal browser, load HTTPS, sign in, view camera status, and capture media.
 - Verify logged-out direct image/video/API access fails; ports 8080/8554/8888/9996/9997
-  must be inaccessible from outside. Check the security group and Compose port bindings.
+  and plaintext 1935 must be inaccessible from outside. Port 1936 accepts only TLS
+  and authenticated camera publishing; camera credentials must not read any stream. Check the security group and Compose port bindings.
 - Confirm CloudWatch disk metrics arrive and alarms/alert subscription work.
   Missing disk metrics are an alarm, not silently healthy.
 - Reboot and confirm the EBS mount precedes Docker startup; confirm recordings survive.
@@ -94,7 +120,7 @@ can temporarily block sign-in; use private access if that tradeoff is unacceptab
 
 Stop the stack with the same Compose files (never down -v), then take an encrypted
 EBS snapshot. Restart recording afterward; this creates a brief recording gap.
-Keep runtime configuration/secrets in a separate encrypted private backup: they are
+Keep runtime configuration/secrets and /etc/rasprec/letsencrypt in a separate encrypted private backup: they are
 not on the media volume by default. TLS data and SQLite are on the data volume.
 
 For restore, stop services, attach a snapshot-restored volume in the same AZ, verify
@@ -109,4 +135,4 @@ See [AWS EBS CloudFormation behavior](https://docs.aws.amazon.com/AWSCloudFormat
 
 When retiring: stop recording; decide whether to retain or securely delete media/backups;
 delete the stack; explicitly review retained EBS volumes, snapshots, orphaned Elastic IPs,
-CloudWatch resources, and tailnet devices. Retained resources continue to incur charges.
+CloudWatch resources, and obsolete device credentials. Retained resources continue to incur charges.

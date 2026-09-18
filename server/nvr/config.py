@@ -105,6 +105,7 @@ class Camera:
     sub_url: str | None = None
     motion: dict[str, Any] = field(default_factory=dict)
     record: bool = True
+    publish_token: str | None = field(default=None, repr=False)
 
     @property
     def detect_path(self) -> str:
@@ -124,7 +125,9 @@ class Config:
         return self.clips_days * 86400
 
 
-def merge_motion(defaults: dict[str, Any], override: dict[str, Any] | None) -> dict[str, Any]:
+def merge_motion(
+    defaults: dict[str, Any], override: dict[str, Any] | None
+) -> dict[str, Any]:
     merged = {**MOTION_DEFAULTS, **defaults, **(override or {})}
     unknown = set(merged) - set(MOTION_DEFAULTS)
     if unknown:
@@ -132,7 +135,9 @@ def merge_motion(defaults: dict[str, Any], override: dict[str, Any] | None) -> d
 
     for key in ("cooldown", "pre_roll", "post_roll", "min_duration", "max_duration"):
         merged[key] = parse_duration(merged[key])
-    if not isinstance(merged["consecutive"], int) or isinstance(merged["consecutive"], bool):
+    if not isinstance(merged["consecutive"], int) or isinstance(
+        merged["consecutive"], bool
+    ):
         raise ConfigError("consecutive must be a positive integer")
     merged["sensitivity"] = float(merged["sensitivity"])
     merged["min_area"] = float(merged["min_area"])
@@ -142,16 +147,24 @@ def merge_motion(defaults: dict[str, Any], override: dict[str, Any] | None) -> d
     values = ("sensitivity", "min_area", "background_alpha")
     if any(not math.isfinite(merged[k]) for k in values):
         raise ConfigError("motion settings must be finite")
-    if not (0 <= merged["sensitivity"] <= 255 and 0 < merged["min_area"] <= 100
-            and 0 < merged["background_alpha"] <= 1 and merged["consecutive"] > 0
-            and 0 < merged["max_duration"] <= 3600
-            and merged["min_duration"] <= merged["max_duration"]):
-        raise ConfigError("motion settings out of range (max_duration must be > 0 and <= 1h)")
+    if not (
+        0 <= merged["sensitivity"] <= 255
+        and 0 < merged["min_area"] <= 100
+        and 0 < merged["background_alpha"] <= 1
+        and merged["consecutive"] > 0
+        and 0 < merged["max_duration"] <= 3600
+        and merged["min_duration"] <= merged["max_duration"]
+    ):
+        raise ConfigError(
+            "motion settings out of range (max_duration must be > 0 and <= 1h)"
+        )
 
     mask = merged["mask"] or []
     for region in mask:
         if len(region) != 4 or any(not 0 <= float(v) <= 100 for v in region):
-            raise ConfigError(f"mask region {region!r} must be [x, y, w, h] in percent (0-100)")
+            raise ConfigError(
+                f"mask region {region!r} must be [x, y, w, h] in percent (0-100)"
+            )
     merged["mask"] = [[float(v) for v in region] for region in mask]
     return merged
 
@@ -159,7 +172,13 @@ def merge_motion(defaults: dict[str, Any], override: dict[str, Any] | None) -> d
 def load(path: str | Path, env: dict[str, str] | None = None) -> Config:
     try:
         return _load(path, env)
-    except (ValueError, TypeError, AttributeError, OverflowError, yaml.YAMLError) as exc:
+    except (
+        ValueError,
+        TypeError,
+        AttributeError,
+        OverflowError,
+        yaml.YAMLError,
+    ) as exc:
         # Avoid including malformed configuration values, which may contain secrets.
         raise ConfigError("invalid configuration types or values") from exc
 
@@ -178,6 +197,7 @@ def _load(path: str | Path, env: dict[str, str] | None = None) -> Config:
 
     cameras: list[Camera] = []
     seen: set[str] = set()
+    tokens: set[str] = set()
     for entry in entries:
         name = str(entry.get("name", "")).strip()
         if not NAME_RE.match(name):
@@ -188,9 +208,32 @@ def _load(path: str | Path, env: dict[str, str] | None = None) -> Config:
             raise ConfigError(f"duplicate camera name {name!r}")
         seen.add(name)
 
-        url = entry.get("url")
-        if not url or not str(url).startswith(("rtsp://", "rtsps://", "http://", "https://")):
-            raise ConfigError(f"camera {name!r} needs an rtsp:// (or http://) url")
+        source = entry.get("source", "pull")
+        token = None
+        if source == "push":
+            if entry.get("url") or entry.get("sub_url"):
+                raise ConfigError("push cameras cannot specify url or sub_url")
+            token = entry.get("publish_token")
+            if not isinstance(token, str) or not re.fullmatch(
+                r"[A-Za-z0-9_-]{32,128}", token
+            ):
+                raise ConfigError(
+                    "push cameras need a unique 32-128 character URL-safe publish_token"
+                )
+            if token in tokens:
+                raise ConfigError("publish_token must be different for every camera")
+            tokens.add(token)
+            url = "publisher"
+        elif source == "pull":
+            if entry.get("publish_token"):
+                raise ConfigError("publish_token is only valid for push cameras")
+            url = entry.get("url")
+            if not url or not str(url).startswith(
+                ("rtsp://", "rtsps://", "http://", "https://")
+            ):
+                raise ConfigError(f"camera {name!r} needs an rtsp:// (or http://) url")
+        else:
+            raise ConfigError("camera source must be pull or push")
 
         cameras.append(
             Camera(
@@ -199,6 +242,7 @@ def _load(path: str | Path, env: dict[str, str] | None = None) -> Config:
                 sub_url=str(entry["sub_url"]) if entry.get("sub_url") else None,
                 motion=merge_motion(motion_defaults, entry.get("motion")),
                 record=bool(entry.get("record", True)),
+                publish_token=token,
             )
         )
 
@@ -208,8 +252,15 @@ def _load(path: str | Path, env: dict[str, str] | None = None) -> Config:
     continuous = parse_duration(retention.get("continuous", "24h"))
     segment = parse_duration(retention.get("segment", "10m"))
     clips_days = float(retention.get("clips_days", 7))
-    if not (continuous >= 1 and 1 <= segment <= continuous and math.isfinite(clips_days * 86400) and clips_days > 0):
-        raise ConfigError("retention must be finite and positive; segment must be >= 1s and <= continuous")
+    if not (
+        continuous >= 1
+        and 1 <= segment <= continuous
+        and math.isfinite(clips_days * 86400)
+        and clips_days > 0
+    ):
+        raise ConfigError(
+            "retention must be finite and positive; segment must be >= 1s and <= continuous"
+        )
     return Config(
         cameras=cameras,
         continuous_retention=continuous,

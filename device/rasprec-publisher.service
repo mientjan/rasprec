@@ -1,0 +1,29 @@
+[Unit]
+Description=RaspRec verified outbound RTMPS publisher
+After=network-online.target mediamtx.service
+Wants=network-online.target mediamtx.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/rasprec/publish.py
+DynamicUser=yes
+LoadCredential=publisher.json:/etc/rasprec/publisher.json
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=15
+TimeoutStopSec=10
+MemoryMax=192M
+CPUQuota=100%
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

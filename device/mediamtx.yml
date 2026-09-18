@@ -8,7 +8,7 @@
 # run.sh patches the PLACEHOLDER values (resolution/bitrate/fps + credentials)
 # for the detected hardware. Do not commit real credentials to this template.
 #
-# SECURITY: this stream is reached only over the Tailscale VPN. No router ports
+# SECURITY: direct access is LAN-only (or an optional private VPN). No router ports
 # are forwarded. Auth below is defense-in-depth in case something on the LAN is
 # compromised. NEVER expose ports 8554/8889 to the public internet.
 
@@ -38,7 +38,7 @@ playback: no
 
 ###############################################
 # RTSP — force TCP. Avoids H.264 decode errors from UDP packet loss and is
-# more reliable across the VPN.
+# more reliable on lossy networks.
 rtsp: yes
 rtspTransports: [tcp]
 rtspAuthMethods: [basic]

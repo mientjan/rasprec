@@ -154,3 +154,7 @@ server/**/*.pem
 server/**/*.key
 server/infra/aws/*.parameters.json
 .venv/
+
+# Device publisher runtime credentials (only the invalid example is tracked)
+device/config/publisher.json
+**/publisher.runtime.json

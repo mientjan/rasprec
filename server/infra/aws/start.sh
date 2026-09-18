@@ -11,7 +11,15 @@ cd "$ROOT"
 compose=(docker compose --env-file "$NVR_ENV_FILE" -f compose.yml -f compose.aws.yml)
 # quiet validation never prints expanded secrets
 "${compose[@]}" config --quiet
-mkdir -p /srv/rasprec/recordings /srv/rasprec/caddy
+mkdir -p /srv/rasprec/recordings /srv/rasprec/caddy /srv/rasprec/acme
+install -d -m 0700 /etc/rasprec/letsencrypt
 "${compose[@]}" build
 "${compose[@]}" run --rm nvr-config
+# Serve HTTP certificate challenges before starting TLS-only ingest.
+"${compose[@]}" up -d --no-deps caddy
+bash "$ROOT/infra/aws/certificates.sh"
 "${compose[@]}" up -d --force-recreate
+install -m 0644 "$ROOT/infra/aws/rasprec-certificates.service" /etc/systemd/system/
+install -m 0644 "$ROOT/infra/aws/rasprec-certificates.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now rasprec-certificates.timer

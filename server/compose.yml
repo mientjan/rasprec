@@ -1,7 +1,8 @@
 name: rasprec-nvr
 
 # Only the nvr service publishes a port, and it binds to loopback. Reach it
-# remotely over Tailscale on this host -- never forward these ports on a router.
+# remotely over an optional private tunnel. The AWS override instead exposes
+# HTTPS and authenticated RTMPS; never expose raw internal service ports.
 
 x-nvr-image: &nvr-image
   build:
@@ -20,6 +21,8 @@ services:
   nvr-config:
     <<: *nvr-image
     command: ["-m", "nvr.render_config"]
+    environment:
+      NVR_INTERNAL_READER_IP: ${NVR_INTERNAL_READER_IP:-172.30.88.10}
     env_file: ["${NVR_ENV_FILE:-.env}"]
     volumes:
       - ./config:/config:ro
@@ -56,6 +59,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    networks:
+      default:
+        ipv4_address: ${NVR_INTERNAL_READER_IP:-172.30.88.10}
     environment:
       MEDIAMTX_HOST: mediamtx
     ports:
@@ -69,3 +75,10 @@ services:
 
 volumes:
   mtxconfig:
+
+# Fixed reader identity keeps anonymous internal playback off the public RTMPS endpoint.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${NVR_NETWORK_SUBNET:-172.30.88.0/24}

@@ -1,5 +1,10 @@
 # RaspRec - Raspberry Pi Camera Streaming
 
+**Cloud recording without Tailscale:** follow [secure outbound RTMPS setup](README.cloud.md).
+The older direct-viewing/VPN instructions below remain optional; new setup defaults
+to no VPN, and cloud publishing is enabled with bash setup-publisher.sh.
+
+
 A lightweight camera streaming solution for Raspberry Pi that captures video
 from the camera module and streams it over the network — with **secure remote
 access over Tailscale** and no open router ports.
@@ -681,7 +686,7 @@ The original project metadata declares ISC licensing.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install pytest PyYAML
+.venv/bin/pip install pytest PyYAML cryptography
 .venv/bin/python -m pytest device/tests -q
 find device -name "*.sh" -exec bash -n {} \;
 ```

@@ -7,6 +7,9 @@ MediaMTX 1.19.x -- note `recordDeleteAfter`, which older docs call
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import ipaddress
 import os
 import sys
 from pathlib import Path
@@ -30,11 +33,13 @@ def build(conf: cfg.Config) -> dict[str, Any]:
             "recordSegmentDuration": cfg.go_duration(conf.segment_duration),
             "recordDeleteAfter": cfg.go_duration(conf.continuous_retention),
         }
+        if cam.publish_token:
+            paths[cam.name]["overridePublisher"] = False
         if cam.sub_url:
             # Detection-only stream: pulled, never written to disk.
             paths[cam.detect_path] = {"source": cam.sub_url, "record": False}
 
-    return {
+    result = {
         "logLevel": "info",
         "logDestinations": ["stdout"],
         # Served only on the internal compose network; the web container is the
@@ -64,11 +69,56 @@ def build(conf: cfg.Config) -> dict[str, Any]:
         "paths": paths,
     }
 
+    publishers = [cam for cam in conf.cameras if cam.publish_token]
+    if publishers:
+        # Only the NVR container may read without credentials. Public publishers
+        # get exactly one publish permission; no default anonymous public access.
+        reader = str(
+            ipaddress.IPv4Address(
+                os.environ.get("NVR_INTERNAL_READER_IP", "172.30.88.10")
+            )
+        )
+        result.update(
+            {
+                "logLevel": "warn",
+                "rtmp": True,
+                "rtmpEncryption": "strict",
+                "rtmpsAddress": ":1936",
+                "rtmpServerCert": "/certs/live/ingest/fullchain.pem",
+                "rtmpServerKey": "/certs/live/ingest/privkey.pem",
+                "authMethod": "internal",
+                "authInternalUsers": [
+                    {
+                        "user": "any",
+                        "ips": [reader + "/32"],
+                        "permissions": [{"action": "read"}, {"action": "playback"}],
+                    },
+                ]
+                + [
+                    {
+                        "user": "camera_" + cam.name,
+                        "pass": "sha256:"
+                        + base64.b64encode(
+                            hashlib.sha256(cam.publish_token.encode()).digest()
+                        ).decode(),
+                        "ips": [],
+                        "permissions": [{"action": "publish", "path": cam.name}],
+                    }
+                    for cam in publishers
+                ],
+            }
+        )
+    return result
+
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     src = argv[0] if argv else os.environ.get("NVR_CONFIG", "/config/cameras.yml")
-    dst = argv[1] if len(argv) > 1 else os.environ.get("MTX_CONFIG", "/mtxconfig/mediamtx.yml")
+    dst = (
+        argv[1]
+        if len(argv) > 1
+        else os.environ.get("MTX_CONFIG", "/mtxconfig/mediamtx.yml")
+    )
 
     try:
         conf = cfg.load(src)
@@ -79,8 +129,15 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(dst)
     out.parent.mkdir(parents=True, exist_ok=True)
     # Contains expanded camera passwords.
-    out.write_text(yaml.safe_dump(build(conf), sort_keys=False))
-    out.chmod(0o600)
+    temporary = out.with_suffix(".tmp")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as handle:
+            yaml.safe_dump(build(conf), handle, sort_keys=False)
+        temporary.replace(out)
+    finally:
+        temporary.unlink(missing_ok=True)
 
     for cam in conf.cameras:
         Path(RECORD_ROOT, cam.name).mkdir(parents=True, exist_ok=True)

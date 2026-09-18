@@ -1,0 +1,11 @@
+# No camera IP addresses, VPN or inbound home-router ports are needed.
+# Generate a different random token for each camera; put it in nvr.env and
+# in that Pi's root-owned /etc/rasprec/publisher.json using setup-publisher.sh.
+retention:
+  continuous: 24h
+  clips_days: 7
+  segment: 10m
+cameras:
+  - name: garage
+    source: push
+    publish_token: ${GARAGE_PUBLISH_TOKEN}

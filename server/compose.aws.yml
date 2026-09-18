@@ -9,8 +9,14 @@ services:
         target: /recordings
         bind: {create_host_path: false}
   mediamtx:
+    ports: ["1936:1936"]
     volumes: !override
       - mtxconfig:/mtxconfig:ro
+      - type: bind
+        source: /etc/rasprec/letsencrypt
+        target: /certs
+        read_only: true
+        bind: {create_host_path: false}
       - type: bind
         source: /srv/rasprec/recordings
         target: /recordings
@@ -34,6 +40,11 @@ services:
     volumes:
       - ./infra/aws/Caddyfile:/etc/caddy/Caddyfile:ro
       - type: bind
+        source: /srv/rasprec/acme
+        target: /var/www/acme
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
         source: /srv/rasprec/caddy
         target: /data
         bind: {create_host_path: false}
@@ -41,4 +52,29 @@ services:
     logging:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
-    depends_on: [nvr]
+    # Can start alone to answer ACME challenges before ingest certificates exist.
+
+
+  certbot:
+    image: certbot/certbot:v5.8.0
+    profiles: [tls-tools]
+    volumes:
+      - type: bind
+        source: /etc/rasprec/letsencrypt
+        target: /etc/letsencrypt
+        bind: {create_host_path: false}
+      - type: bind
+        source: /srv/rasprec/acme
+        target: /var/www/acme
+        bind: {create_host_path: false}
+    # ACME account keys are private runtime state, never in the source checkout.
+    command:
+      - certonly
+      - --non-interactive
+      - --agree-tos
+      - --webroot
+      - --webroot-path=/var/www/acme
+      - --cert-name=ingest
+      - --email=${NVR_ACME_EMAIL:-}
+      - -d
+      - ${NVR_DOMAIN:?Set NVR_DOMAIN}

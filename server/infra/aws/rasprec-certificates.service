@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew RaspRec RTMPS certificate and reload ingest when changed
+After=docker.service network-online.target
+Requires=docker.service
+RequiresMountsFor=/srv/rasprec
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/rasprec/server/infra/aws/certificates.sh --renew

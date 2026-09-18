@@ -48,11 +48,12 @@ Resources:
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Public HTTPS only; administration through SSM
+      GroupDescription: HTTPS and TLS-only camera ingest; administration through SSM
       VpcId: !Ref Vpc
       SecurityGroupIngress:
         - {IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0}
         - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
+        - {IpProtocol: tcp, FromPort: 1936, ToPort: 1936, CidrIp: 0.0.0.0/0}
   Role:
     Type: AWS::IAM::Role
     Properties:

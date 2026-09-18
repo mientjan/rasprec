@@ -214,8 +214,8 @@ if [ -n "$INSTALL_TAILSCALE" ]; then
     echo "INSTALL_TAILSCALE=$INSTALL_TAILSCALE (from environment)"
     TS_CHOICE="$INSTALL_TAILSCALE"
 else
-    read -p "Install Tailscale for remote access? (Y/n): " -n 1 -r; echo
-    if [[ $REPLY =~ ^[Nn]$ ]]; then TS_CHOICE="no"; else TS_CHOICE="yes"; fi
+    read -p "Install optional Tailscale for direct remote access? (y/N): " -n 1 -r; echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then TS_CHOICE="yes"; else TS_CHOICE="no"; fi
 fi
 
 TAILSCALE_ENABLED=false
@@ -226,7 +226,7 @@ if [[ "$TS_CHOICE" =~ ^([Yy]|yes|YES|true|1)$ ]]; then
 else
     echo ""
     echo "Skipped — running in LAN-only mode."
-    echo "The camera is reachable only from devices on this local network."
+    echo "Direct viewing is local. For secure cloud recording without a VPN: ./setup-publisher.sh"
     echo "Run ./setup-tailscale.sh any time later to add remote access."
 fi
 
@@ -269,8 +269,8 @@ if [ "$TAILSCALE_ENABLED" = true ]; then
     echo "From anywhere (over Tailscale) — see the URL printed by"
     echo "setup-tailscale.sh, e.g. rtsp://<tailscale-name>:8554/cam"
 else
-    echo "Remote access is NOT enabled. The camera works only on this network."
-    echo "To view it from outside the house later, run: ./setup-tailscale.sh"
+    echo "Direct remote viewing is not enabled. Cloud publishing is configured separately."
+    echo "For secure cloud recording without Tailscale, run: ./setup-publisher.sh"
 fi
 echo ""
 echo "Manage:  sudo systemctl status mediamtx"
@@ -280,4 +280,4 @@ echo ""
 echo "SECURITY WARNING: do not forward ports 8554/8889 on the router, and do not"
 echo "expose them to the internet. RTSP has no transport encryption, and an"
 echo "exposed camera port is found by internet scanners within hours."
-echo "To view the camera from outside the house, use Tailscale (./setup-tailscale.sh)."
+echo "For cloud recording, use ./setup-publisher.sh (outbound, verified RTMPS)."

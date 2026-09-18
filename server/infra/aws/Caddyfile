@@ -5,3 +5,14 @@
     }
     reverse_proxy nvr:8080
 }
+
+# Certificate challenge for RTMPS. The website still has Caddy-managed HTTPS.
+http://{$NVR_DOMAIN} {
+    handle /.well-known/acme-challenge/* {
+        root * /var/www/acme
+        file_server
+    }
+    handle {
+        redir https://{$NVR_DOMAIN}{uri} permanent
+    }
+}

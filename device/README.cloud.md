@@ -57,3 +57,31 @@ new path is verified, you may explicitly disable an old tailscaled service yours
 publisher.example.json contains invalid placeholders only. Do not fill it with real
 credentials. Use the setup prompt or a root-owned runtime file outside the checkout.
 Never share publisher.json, camera tokens, native media debug logs, or certificate keys.
+
+## Publisher exits immediately with ValueError
+
+Older publisher versions reject the permission bits on systemd's runtime
+credential copy. With `DynamicUser` and `LoadCredential`, systemd can grant
+read access through a named-user ACL. That ACL's mask appears as mode `0440`
+to Python even though the owning group itself has no read access.
+
+The publisher accepts this read-only mask only for the root-owned runtime copy
+at `/run/credentials/rasprec-publisher.service/publisher.json`, when launched
+with systemd's credential environment. Other group/world-accessible configs
+are still rejected. Keep the original `/etc/rasprec/publisher.json` private;
+do not relax its permissions or disable the service sandbox.
+
+After obtaining the updated device code, update the installed publisher without
+re-entering or printing credentials (run from the repository root):
+
+```bash
+sudo install -m 0755 device/scripts/publish.py /usr/local/lib/rasprec/publish.py
+sudo systemctl restart rasprec-publisher
+sudo journalctl -u rasprec-publisher -n 20 --no-pager
+```
+
+Failures now identify a safe stage (configuration, local RTSP, TLS connection,
+RTMP output, stream-template copy or packet remuxing). Native error messages,
+credentials and URLs remain suppressed. If publishing still fails, share only
+the sanitized stage/error line, not configuration contents. Confirm delivery
+on the server's camera page; service status alone does not prove video arrived.

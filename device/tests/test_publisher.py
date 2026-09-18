@@ -196,3 +196,76 @@ def test_private_config_and_sanitized_error(tmp_path, monkeypatch, capsys):
     stderr = capsys.readouterr().err
     assert "synthetic-password" not in stderr and "A" * 43 not in stderr
     assert "RuntimeError" in stderr
+
+
+@pytest.mark.parametrize(
+    "managed,uid,mode,allowed",
+    [
+        (True, 0, 0o440, True),
+        (False, 0, 0o440, False),
+        (True, 1000, 0o440, False),
+        (True, 0, 0o444, False),
+        (True, 0, 0o640, False),
+        (True, 0, 0o460, False),
+    ],
+)
+def test_systemd_acl_mask_is_only_allowed_on_root_owned_runtime_copy(
+    monkeypatch, managed, uid, mode, allowed
+):
+    from types import SimpleNamespace
+
+    path = Path("/run/credentials/rasprec-publisher.service/publisher.json")
+    monkeypatch.setattr(
+        Path, "stat", lambda self: SimpleNamespace(st_mode=mode, st_uid=uid)
+    )
+    monkeypatch.setattr(Path, "read_text", lambda self: json.dumps(valid_config()))
+    if allowed:
+        assert publisher.load(path, systemd_credential=managed)["camera"] == "garage"
+    else:
+        with pytest.raises(ValueError):
+            publisher.load(path, systemd_credential=managed)
+
+
+def test_systemd_flag_does_not_relax_source_config_permissions(tmp_path):
+    path = tmp_path / "publisher.json"
+    path.write_text(json.dumps(valid_config()))
+    path.chmod(0o440)
+    with pytest.raises(ValueError):
+        publisher.load(path, systemd_credential=True)
+
+
+def test_media_value_error_reports_stage_without_native_message(
+    monkeypatch, capsys, tmp_path
+):
+    from types import SimpleNamespace
+
+    path = tmp_path / "publisher.json"
+    path.write_text(json.dumps(valid_config()))
+    path.chmod(0o600)
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+    monkeypatch.setattr(publisher.sys, "argv", ["publish.py"])
+
+    def fail(*args, **kwargs):
+        raise ValueError(valid_config()["source_url"] + valid_config()["publish_token"])
+
+    fake_av = SimpleNamespace(
+        logging=SimpleNamespace(PANIC=0, set_level=lambda level: None), open=fail
+    )
+    monkeypatch.setitem(publisher.sys.modules, "av", fake_av)
+    assert publisher.main() == 1
+    stderr = capsys.readouterr().err
+    assert "opening local RTSP stream failed (ValueError)" in stderr
+    assert "synthetic-password" not in stderr
+    assert valid_config()["publish_token"] not in stderr
+
+
+def test_permission_failure_reports_safe_actionable_message(
+    monkeypatch, capsys, tmp_path
+):
+    path = tmp_path / "publisher.json"
+    path.write_text(json.dumps(valid_config()))
+    path.chmod(0o644)
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+    monkeypatch.setattr(publisher.sys, "argv", ["publish.py"])
+    assert publisher.main() == 1
+    assert "configuration permissions rejected" in capsys.readouterr().err

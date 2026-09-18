@@ -24,6 +24,10 @@ TOKEN = re.compile(r"[A-Za-z0-9_-]{32,128}")
 NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 
 
+class PublisherError(ValueError):
+    """Only fixed, secret-free diagnostic messages may be used here."""
+
+
 def validate(data):
     if not isinstance(data, dict) or set(data) - {
         "server_host",
@@ -32,38 +36,52 @@ def validate(data):
         "publish_token",
         "source_url",
     }:
-        raise ValueError("invalid publisher configuration fields")
+        raise PublisherError("invalid publisher configuration fields")
     host = data.get("server_host", "")
     if not isinstance(host, str) or not re.fullmatch(
         r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}", host
     ):
-        raise ValueError("server_host must be a DNS hostname or IPv4 address")
+        raise PublisherError("server_host must be a DNS hostname or IPv4 address")
     port = data.get("server_port", 1936)
     if type(port) is not int or not 1 <= port <= 65535:
-        raise ValueError("invalid server_port")
+        raise PublisherError("invalid server_port")
     if not isinstance(data.get("camera"), str) or not NAME.fullmatch(data["camera"]):
-        raise ValueError("invalid camera name")
+        raise PublisherError("invalid camera name")
     if not isinstance(data.get("publish_token"), str) or not TOKEN.fullmatch(
         data["publish_token"]
     ):
-        raise ValueError("publish_token must be 32-128 URL-safe characters")
+        raise PublisherError("publish_token must be 32-128 URL-safe characters")
     source = urlsplit(data.get("source_url", ""))
     if (
         source.scheme != "rtsp"
         or source.hostname not in {"127.0.0.1", "::1"}
         or not source.path
     ):
-        raise ValueError("source_url must be the Pi's loopback RTSP stream")
+        raise PublisherError("source_url must be the Pi's loopback RTSP stream")
     # Validate the port without ever printing a malformed credential-bearing URL.
     if source.port is not None and not 1 <= source.port <= 65535:
-        raise ValueError("invalid local source port")
+        raise PublisherError("invalid local source port")
     return {**data, "server_port": port}
 
 
-def load(path):
+def load(path, *, systemd_credential=False):
     path = Path(path)
-    if path.stat().st_mode & 0o077:
-        raise ValueError("publisher configuration must not be group/world accessible")
+    info = path.stat()
+    mode = info.st_mode & 0o777
+    # LoadCredential + DynamicUser on systemd 252 uses a named-user ACL.
+    # Its read-only ACL mask appears as 0440 to stat(), although the owning
+    # group has no access. Only trust this on systemd's root-owned runtime copy;
+    # the original /etc configuration must still be private (0600 or 0400).
+    managed_acl = (
+        systemd_credential
+        and path.parent == Path("/run/credentials/rasprec-publisher.service")
+        and info.st_uid == 0
+        and mode == 0o440
+    )
+    if mode & 0o077 and not managed_acl:
+        raise PublisherError(
+            "configuration permissions rejected; source file must be mode 0600 or 0400"
+        )
     return validate(json.loads(path.read_text()))
 
 
@@ -201,57 +219,73 @@ class TLSBridge:
 
 
 def publish(data, *, cafile=None):
-    import av
+    stage = "loading PyAV"
+    try:
+        import av
 
-    # Never emit native FFmpeg errors that may include stream passwords.
-    av.logging.set_level(av.logging.PANIC)
-    with av.open(
-        data["source_url"],
-        options={"rtsp_transport": "tcp"},
-        timeout=(TIMEOUT, TIMEOUT),
-    ) as source:
-        video = source.streams.video[0]
-        if video.codec_context.name != "h264":
-            raise ValueError("cloud publisher requires an H.264 camera stream")
-        with TLSBridge(data["server_host"], data["server_port"], cafile) as bridge:
-            query = urlencode(
-                {"user": "camera_" + data["camera"], "pass": data["publish_token"]}
-            )
-            destination = (
-                f"rtmp://127.0.0.1:{bridge.port_local}/{data['camera']}?{query}"
-            )
-            with av.open(
-                destination,
-                "w",
-                format="flv",
-                options={"rtmp_live": "live", "rw_timeout": str(TIMEOUT * 1_000_000)},
-            ) as output:
-                if hasattr(output, "add_stream_from_template"):
-                    out_stream = output.add_stream_from_template(video)
-                else:  # Debian Bookworm ships PyAV 10.
-                    out_stream = output.add_stream(template=video)
-                started = False
-                origin = None
-                for packet in source.demux(video):
-                    if packet.dts is None:
-                        continue
-                    if not started:
-                        if not packet.is_keyframe:
+        # Never emit native FFmpeg errors that may include stream passwords.
+        av.logging.set_level(av.logging.PANIC)
+        stage = "opening local RTSP stream"
+        with av.open(
+            data["source_url"],
+            options={"rtsp_transport": "tcp"},
+            timeout=(TIMEOUT, TIMEOUT),
+        ) as source:
+            stage = "checking local H.264 video"
+            video = source.streams.video[0]
+            if video.codec_context.name != "h264":
+                raise PublisherError("cloud publisher requires an H.264 camera stream")
+            stage = "connecting verified TLS to server"
+            with TLSBridge(data["server_host"], data["server_port"], cafile) as bridge:
+                query = urlencode(
+                    {"user": "camera_" + data["camera"], "pass": data["publish_token"]}
+                )
+                destination = (
+                    f"rtmp://127.0.0.1:{bridge.port_local}/{data['camera']}?{query}"
+                )
+                stage = "opening RTMP output"
+                with av.open(
+                    destination,
+                    "w",
+                    format="flv",
+                    options={
+                        "rtmp_live": "live",
+                        "rw_timeout": str(TIMEOUT * 1_000_000),
+                    },
+                ) as output:
+                    stage = "copying H.264 stream template"
+                    if hasattr(output, "add_stream_from_template"):
+                        out_stream = output.add_stream_from_template(video)
+                    else:  # Debian Bookworm ships PyAV 10.
+                        out_stream = output.add_stream(template=video)
+                    started = False
+                    origin = None
+                    stage = "remuxing video packets"
+                    for packet in source.demux(video):
+                        if packet.dts is None:
                             continue
-                        started = True
-                        origin = packet.dts
-                    packet.dts -= origin
-                    if packet.pts is not None:
-                        packet.pts -= origin
-                    packet.stream = out_stream
-                    output.mux(packet)
+                        if not started:
+                            if not packet.is_keyframe:
+                                continue
+                            started = True
+                            origin = packet.dts
+                        packet.dts -= origin
+                        if packet.pts is not None:
+                            packet.pts -= origin
+                        packet.stream = out_stream
+                        output.mux(packet)
+    except PublisherError:
+        raise
+    except Exception as exc:
+        # Do not chain native errors: they may contain source/publishing secrets.
+        raise PublisherError(f"{stage} failed ({type(exc).__name__})") from None
 
 
 def configure():
     from getpass import getpass
 
     if os.geteuid() != 0:
-        raise ValueError("configuration must be installed as root")
+        raise PublisherError("configuration must be installed as root")
     path = Path("/etc/rasprec/publisher.json")
     if (
         path.exists()
@@ -284,6 +318,7 @@ def configure():
 
 
 def main():
+    stage = "startup"
     try:
         if len(sys.argv) in (4, 5) and sys.argv[1] == "--tls-bridge":
             bridge = TLSBridge(
@@ -300,18 +335,26 @@ def main():
             configure()
             return 0
         if sys.argv[1:]:
-            raise ValueError("unsupported arguments")
+            raise PublisherError("unsupported arguments")
         credential_dir = os.environ.get("CREDENTIALS_DIRECTORY", "/etc/rasprec")
-        data = load(Path(credential_dir) / "publisher.json")
+        stage = "reading private configuration"
+        data = load(
+            Path(credential_dir) / "publisher.json",
+            systemd_credential="CREDENTIALS_DIRECTORY" in os.environ,
+        )
+        stage = "publishing"
         publish(data)
         print("Camera stream ended; service will reconnect.", flush=True)
         return 1
     except KeyboardInterrupt:
         return 0
+    except PublisherError as exc:
+        print(f"Publishing stopped: {exc}.", file=sys.stderr, flush=True)
+        return 1
     except Exception as exc:
         # Never print exception text, URLs, configuration, or native media logs.
         print(
-            f"Publishing stopped ({type(exc).__name__}); verify configuration, certificate and camera availability.",
+            f"Publishing stopped during {stage} ({type(exc).__name__}); verify configuration, certificate and camera availability.",
             file=sys.stderr,
             flush=True,
         )
